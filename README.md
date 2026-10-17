@@ -53,14 +53,16 @@ Lunaは`none / low / medium / high / xhigh / max`を選択できます。
 ## 操作
 
 - 文章を選択して **Ctrl+M**。元の入力欄は書き換えません。
-- ポップアップ上部をドラッグして移動。
+- ポップアップ上部をドラッグして移動。翻訳中は本文部分からも移動できます。
+  マウスを離すまで移動を追跡し、結果表示でも移動先を保ちます。
 - 端・四隅を両矢印カーソルでリサイズ。最小320×100、モニター作業領域内に制限。
 - 手動で変えた幅をプロセス中に維持。高さは本文の実際の折り返し量に合わせて伸縮します。
   モニターの作業領域いっぱいまで広げても収まらない長文だけ縦スクロールします。幅を変えた後も高さを測り直します。
 - 日本語の文字間と英単語の区切りを使って折り返します。幅に収まる英単語は途中で分断せず、
   幅より長い単語・URLだけ表示上で分割します。段落・箇条書き・コードの明示的な改行は保持します。
 - 訳文を右クリック1回、または右上の「コピー」で全文コピー。スクロールで見えていない部分も含みます。
-  成功時はポップアップ内に「コピーしました」を短く表示します。失敗時は再試行の案内を表示します。
+  成功時は緑枠とチェック付きの「コピーしました」を約1.3秒表示します。
+  本文の高さ・スクロール・フォーカスを変えず、Windows通知も使いません。失敗時は再試行の案内を表示します。
 - 外クリック・Esc・×で閉じます。リサイズ・ドラッグ・右クリックコピー中は閉じません。
 - トレイから設定・一時停止・終了。
 
@@ -123,6 +125,7 @@ $env:PYTHONPATH = (Get-Location).Path
 .\.venv\Scripts\python.exe tests\windows_autoheight_smoke.py
 .\.venv\Scripts\python.exe tests\windows_mixed_wrap_smoke.py
 .\.venv\Scripts\python.exe tests\windows_copy_feedback_smoke.py
+.\.venv\Scripts\python.exe tests\windows_toast_drag_smoke.py
 .\.venv\Scripts\python.exe tests\windows_owner_message_smoke.py
 .\.venv\Scripts\python.exe tests\windows_right_click_smoke.py
 .\.venv\Scripts\python.exe tests\windows_translation_smoke.py

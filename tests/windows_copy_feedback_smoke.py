@@ -23,14 +23,14 @@ try:
             app.copy_button.invoke();app.root.update()
             copy.assert_called_once_with(source)
         check('button copies entire unwrapped result once',True)
-        check('successful button copy shows inline confirmation',app.copy_feedback.winfo_ismapped() and app.copy_feedback.cget('text')=='コピーしました')
+        check('successful button copy shows inline confirmation',app.copy_toast.winfo_ismapped() and app.copy_toast_label.cget('text')=='✓ コピーしました')
         check('long text still scrolls with feedback',app.scroll.winfo_ismapped() and app.text.yview()[1]<1)
         app.text.yview_moveto(1);app.root.update()
         check('feedback leaves final text reachable',app.text.bbox('end-2c') is not None)
         with patch('jtranslate_app.translate_app.pyperclip.copy') as copy:
             app.text.event_generate('<Button-3>',x=20,y=20);app.root.update()
             copy.assert_called_once_with(source)
-        check('single right click shares copy and success feedback',app.copy_feedback.cget('text')=='コピーしました')
+        check('single right click shares copy and success feedback',app.copy_toast_label.cget('text')=='✓ コピーしました')
         x,y=app.copy_button.winfo_rootx()+3,app.copy_button.winfo_rooty()+3
         app.mouse_down=False
         with patch.object(app.root,'winfo_pointerxy',return_value=(x,y)),patch.object(ctypes.windll.user32,'GetAsyncKeyState',side_effect=lambda key:0x8000 if key==1 else 0):
@@ -64,7 +64,7 @@ try:
         with patch('jtranslate_app.translate_app.pyperclip.copy'):
             app.copy_button.invoke()
         app.root.after(1950,app.root.quit);app.root.mainloop()
-        check('success feedback expires automatically',not app.copy_feedback.winfo_ismapped() and app._copy_feedback_timer is None)
+        check('success feedback expires automatically',not app.copy_feedback.winfo_ismapped() and not app.copy_toast.winfo_ismapped() and app._copy_feedback_timer is None)
         app.events.put(('loading',app.generation));app.poll();app.root.update()
         check('loading explanation uses one Esc explanation line',app._display_source.count('\n')==1 and 'Esc：' in app._display_source and '進行中の通信' in app._display_source)
         check('loading copy button disabled',app.copy_button.instate(['disabled']))
@@ -77,7 +77,7 @@ try:
         start=SimpleNamespace(x_root=app.title.winfo_rootx()+4,y_root=app.title.winfo_rooty()+4)
         app.drag_start(start)
         app.drag_move(SimpleNamespace(x_root=start.x_root+30,y_root=start.y_root+20));app.root.update()
-        check('header drag preserves inline feedback and controls',app.root.winfo_x()==130 and app.root.winfo_y()==120 and app.copy_feedback.winfo_ismapped() and inside(app.copy_button))
+        check('header drag preserves inline feedback and controls',app.root.winfo_x()==130 and app.root.winfo_y()==120 and app.copy_toast.winfo_ismapped() and inside(app.copy_button))
         check('feedback layout keeps wrapped final character visible',app.text.yview()[1]==1 and app.text.bbox('end-2c') is not None)
         ctypes.windll.dwmapi.DwmFlush()
         from PIL import ImageGrab

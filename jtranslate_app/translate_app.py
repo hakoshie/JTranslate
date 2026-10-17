@@ -49,15 +49,22 @@ class TranslationApp:
         self.mouse_down = False
         self.escape_down = False
         self.resizing = None
+        self.dragging = False
+        self._drag_position = None
+        self._drag_anchor = None
+        self._display_kind = None
         self.user_size = None
         self.popup_minimum = (320,100)
         content = ttk.Frame(self.root)
         content.pack(fill='both',expand=True,padx=5,pady=5)
-        header = ttk.Frame(content, padding=8)
+        header = self.header = ttk.Frame(content,padding=8,cursor='fleur')
         header.pack(fill='x')
         self.title = ttk.Label(header, text='⠿ 日本語訳')
-        self.title.bind('<ButtonPress-1>', self.drag_start)
-        self.title.bind('<B1-Motion>', self.drag_move)
+        self.title.configure(cursor='fleur')
+        for target in (header,self.title):
+            target.bind('<ButtonPress-1>',self.drag_start)
+            target.bind('<B1-Motion>',self.drag_move)
+            target.bind('<ButtonRelease-1>',self.drag_end)
         self.close_button = ttk.Button(header,text='×',width=3,command=self.hide)
         self.close_button.pack(side='right')
         self.copy_button = ttk.Button(header,text='コピー',width=6,command=self.copy_result,state='disabled')
@@ -66,6 +73,11 @@ class TranslationApp:
         self.copy_feedback = ttk.Label(content,text='',padding=(0,2))
         self._copy_feedback_timer = None
         self._copy_feedback_revision = 0
+        self.copy_toast = tk.Frame(self.root,bg='#f0fdf4',highlightbackground='#16a34a',
+                                   highlightthickness=2,bd=0,takefocus=0)
+        self.copy_toast_label = tk.Label(self.copy_toast,text='',bg='#f0fdf4',fg='#166534',
+            font=('Yu Gothic UI',10,'bold'),padx=10,pady=6,takefocus=0)
+        self.copy_toast_label.pack(fill='both',expand=True)
         self.text = tk.Text(content, wrap='none', font=('Yu Gothic UI', 12),
                             relief='flat', padx=12, pady=8, state='disabled')
         self.scroll = ttk.Scrollbar(content, command=self.text.yview)
@@ -82,6 +94,9 @@ class TranslationApp:
         self._layout_key = None
         self.root.bind('<Configure>', self.layout_changed)
         self.text.bind('<Button-3>',self.copy_on_right_click)
+        self.text.bind('<ButtonPress-1>',self.loading_drag_start)
+        self.text.bind('<B1-Motion>',self.loading_drag_move)
+        self.text.bind('<ButtonRelease-1>',self.drag_end)
         self.root.bind('<Button-3>',self.copy_on_right_click)
         self.resize_handles = {}
         for edge,cursor in {'n':'size_ns','s':'size_ns','e':'size_we','w':'size_we',
@@ -122,13 +137,51 @@ class TranslationApp:
         user.SetWindowLongPtrW(hwnd, -20, get_style(hwnd, -20) | 0x08000080)
 
     def drag_start(self, event):
-        self.drag = (event.x_root - self.root.winfo_x(), event.y_root - self.root.winfo_y())
+        if self.resizing:
+            return 'break'
+        self.dragging = True
+        self._drag_anchor = (event.x_root,event.y_root)
+        self._drag_position = (self.root.winfo_x(),self.root.winfo_y())
+        self.drag = (event.x_root-self._drag_position[0],event.y_root-self._drag_position[1])
+        target = getattr(event,'widget',self.title)
+        target.grab_set()
+        return 'break'
+
+    def loading_drag_start(self, event):
+        if self._display_kind == 'loading':
+            return self.drag_start(event)
+
+    def loading_drag_move(self, event):
+        if self.dragging:
+            return self.drag_move(event)
 
     def drag_move(self, event):
+        if not self.dragging:
+            return
+        self._drag_anchor = (event.x_root,event.y_root)
         x,y,w,h = constrain_rect((event.x_root-self.drag[0],event.y_root-self.drag[1],
                                  self.root.winfo_width(),self.root.winfo_height()),
                                  self.work_area((event.x_root,event.y_root)))
+        self._drag_position = (x,y)
         self.root.geometry(f'{w}x{h}+{x}+{y}')
+        return 'break'
+
+    def drag_end(self, event=None):
+        if not getattr(self,'dragging',False):
+            return
+        if event is not None:
+            self.drag_move(event)
+        grab = self.root.grab_current()
+        if grab:
+            grab.grab_release()
+        self.dragging = False
+        self.mouse_down = False
+        return 'break'
+
+    def popup_work_area(self):
+        # The intended monitor is authoritative before Win32 applies a queued move.
+        anchor = self._drag_anchor if self._drag_position is not None else None
+        return self.work_area(anchor)
 
     def work_area(self, anchor=None):
         from ctypes import wintypes
@@ -151,6 +204,7 @@ class TranslationApp:
         return 0,0,self.root.winfo_screenwidth(),self.root.winfo_screenheight()
 
     def resize_start(self,event,edge):
+        self.drag_end()
         self.resizing = (edge,event.x_root,event.y_root,
             (self.root.winfo_x(),self.root.winfo_y(),self.root.winfo_width(),self.root.winfo_height()))
         event.widget.grab_set()
@@ -159,9 +213,11 @@ class TranslationApp:
     def resize_move(self,event):
         if self.resizing:
             edge,x,y,rect = self.resizing
-            left,top,w,h = resize_rect(rect,edge,event.x_root-x,event.y_root-y,self.work_area(),
+            left,top,w,h = resize_rect(rect,edge,event.x_root-x,event.y_root-y,self.popup_work_area(),
                 getattr(self,'popup_minimum',(320,100)))
             self.user_size = (w,h)
+            if self._drag_position is not None:
+                self._drag_position = (left,top)
             self.root.geometry(f'{w}x{h}+{left}+{top}')
         return 'break'
 
@@ -176,6 +232,9 @@ class TranslationApp:
         return 'break'
 
     def hide(self):
+        self.drag_end()
+        self._drag_position = None
+        self._drag_anchor = None
         self.clear_copy_feedback(refit=False)
         self.generation += 1
         if getattr(self,'resizing',None):
@@ -194,13 +253,15 @@ class TranslationApp:
         down = bool(user.GetAsyncKeyState(1) & 0x8000 or user.GetAsyncKeyState(2) & 0x8000)
         escape = bool(user.GetAsyncKeyState(0x1b) & 0x8000)
         if self.root.winfo_viewable():
-            if down and not self.mouse_down and not self.resizing and not self.contains_point(*self.root.winfo_pointerxy()):
+            if down and not self.mouse_down and not self.resizing and not getattr(self,'dragging',False) and not self.contains_point(*self.root.winfo_pointerxy()):
                 self.hide()
             elif escape and not self.escape_down:
                 self.hide()
         self.mouse_down, self.escape_down = down, escape
 
     def layout_changed(self, event):
+        if event.widget is self.root:
+            self.position_copy_toast()
         if event.widget is not self.root or self.resizing:
             return
         if self._layout_active:
@@ -221,7 +282,7 @@ class TranslationApp:
 
     def layout_key(self):
         return (self.root.winfo_width(),self.root.winfo_height(),
-                self.work_area(),self.root.winfo_fpixels('1i'))
+                self.popup_work_area(),self.root.winfo_fpixels('1i'))
 
     def reflow_text(self):
         self.copy_feedback.configure(wraplength=max(1,self.text.winfo_width()-24))
@@ -254,7 +315,7 @@ class TranslationApp:
         self._layout_dirty = False
         content_revision,fit_request = self._layout_revision,self._layout_request
         try:
-            bounds = bounds or self.work_area()
+            bounds = bounds or self.popup_work_area()
             self.scroll.pack_forget()
             self.root.update()
             if self.closed or not self.root.winfo_viewable():
@@ -275,15 +336,17 @@ class TranslationApp:
                 if self.closed or not self.root.winfo_viewable():
                     return
                 height = required_height()
-            x,y,w,h = constrain_rect((self.root.winfo_x(),self.root.winfo_y(),
-                self.root.winfo_width(),height),bounds,self.popup_minimum)
+            left,top = self._drag_position or (self.root.winfo_x(),self.root.winfo_y())
+            x,y,w,h = constrain_rect((left,top,self.root.winfo_width(),height),bounds,self.popup_minimum)
+            if self._drag_position is not None:
+                self._drag_position = (x,y)
             measured = (measured_width,bounds,self.root.winfo_fpixels('1i'),
                         content_revision,fit_request)
             # An explicit plus also represents absolute negative monitor coordinates.
             self.root.geometry(f'{w}x{h}+{x}+{y}')
             self.root.update()
             if not self.closed:
-                actual = (self.root.winfo_width(),self.work_area(),self.root.winfo_fpixels('1i'),
+                actual = (self.root.winfo_width(),self.popup_work_area(),self.root.winfo_fpixels('1i'),
                           self._layout_revision,self._layout_request)
                 self._layout_dirty = actual != measured
                 if not self._layout_dirty:
@@ -294,6 +357,8 @@ class TranslationApp:
                 self._layout_timer = self.root.after_idle(self.refit_if_changed)
 
     def display(self, text, kind='result'):
+        self._display_kind = kind
+        self.text.configure(cursor='fleur' if kind=='loading' else 'xterm')
         self.clear_copy_feedback(refit=False)
         self.copy_button.configure(state='normal' if kind=='result' and self.result else 'disabled')
         self._layout_revision += 1
@@ -306,11 +371,11 @@ class TranslationApp:
         self.text.configure(state='disabled')
         visible = self.root.winfo_viewable()
         anchor = None if visible else self.root.winfo_pointerxy()
-        bounds = self.work_area(anchor)
+        bounds = self.popup_work_area() if visible else self.work_area(anchor)
         self.popup_minimum = (min(320,bounds[2]-bounds[0]),min(100,bounds[3]-bounds[1]))
         self.root.minsize(*self.popup_minimum)
         width = self.user_size[0] if self.user_size else 540
-        x,y = (self.root.winfo_x(),self.root.winfo_y()) if visible else (anchor[0]+16,anchor[1]+16)
+        x,y = (self._drag_position or (self.root.winfo_x(),self.root.winfo_y())) if visible else (anchor[0]+16,anchor[1]+16)
         x,y,width,height = constrain_rect((x,y,width,self.popup_minimum[1]),bounds,self.popup_minimum)
         layout_was_active = self._layout_active
         self._layout_active = True
@@ -341,17 +406,40 @@ class TranslationApp:
             self.root.after_cancel(self._copy_feedback_timer)
             self._copy_feedback_timer = None
         self.copy_feedback.pack_forget()
+        self.copy_toast.place_forget()
         if refit and not self.closed and self.root.winfo_viewable():
             self.fit_height()
 
+    def position_copy_toast(self, show=False):
+        if not show and self.copy_toast.winfo_manager() != 'place':
+            return
+        font = tkfont.Font(font=self.copy_toast_label.cget('font'))
+        natural_width = font.measure(self.copy_toast_label.cget('text'))+24
+        width = max(1,min(natural_width,self.root.winfo_width()-20))
+        self.copy_toast_label.configure(wraplength=max(1,width-24))
+        self.copy_toast.place(relx=.5,rely=1,anchor='s',y=-10,width=width)
+        self.copy_toast.lift()
+
     def show_copy_feedback(self, text, success):
+        had_error = self.copy_feedback.winfo_ismapped()
         self.clear_copy_feedback(refit=False)
         revision = self._copy_feedback_revision
-        self.copy_feedback.configure(text=text,foreground='#166534' if success else '#b91c1c')
-        self.copy_feedback.pack(fill='x',before=self.text,padx=12,pady=(0,4))
-        self.fit_height()
+        if success:
+            if had_error:
+                self.fit_height()
+            if revision != self._copy_feedback_revision or self.closed:
+                return
+            self.copy_toast_label.configure(text='✓ '+text)
+            self.root.update_idletasks()
+            if revision != self._copy_feedback_revision or self.closed:
+                return
+            self.position_copy_toast(show=True)
+        else:
+            self.copy_feedback.configure(text=text,foreground='#b91c1c')
+            self.copy_feedback.pack(fill='x',before=self.text,padx=12,pady=(0,4))
+            self.fit_height()
         if revision == self._copy_feedback_revision and not self.closed and self.root.winfo_viewable():
-            self._copy_feedback_timer = self.root.after(1800 if success else 4000,
+            self._copy_feedback_timer = self.root.after(1300 if success else 4000,
                 lambda: self.expire_copy_feedback(revision))
 
     def expire_copy_feedback(self, revision):
@@ -451,6 +539,7 @@ class TranslationApp:
         self.root.after(30, self.poll)
 
     def quit(self):
+        self.drag_end()
         self.closed = True
         self.clear_copy_feedback(refit=False)
         self.hotkey.stop()

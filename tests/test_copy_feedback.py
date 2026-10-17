@@ -6,7 +6,9 @@ def make_app():
     app=TranslationApp.__new__(TranslationApp)
     app.result='Full original translation\n'+'Long line '*100
     app.root=Mock();app.root.winfo_viewable.return_value=True
-    app.copy_feedback=Mock();app.text=Mock();app.fit_height=Mock()
+    app.copy_feedback=Mock();app.copy_toast=Mock();app.copy_toast_label=Mock()
+    app.copy_feedback.winfo_ismapped.return_value=False
+    app.position_copy_toast=Mock();app.text=Mock();app.fit_height=Mock()
     app._copy_feedback_timer=None;app.closed=False;app.generation=1;app.resizing=None
     app.root.after.return_value='feedback-timer'
     return app
@@ -16,8 +18,8 @@ def test_copy_reports_success_only_after_complete_original_result_copied():
     with patch('jtranslate_app.translate_app.pyperclip.copy') as copy:
         assert app.copy_result() is True
         copy.assert_called_once_with(app.result)
-    assert app.copy_feedback.configure.call_args.kwargs['text']=='コピーしました'
-    assert app.root.after.call_args.args[0]==1800
+    assert app.copy_toast_label.configure.call_args.kwargs['text']=='✓ コピーしました'
+    assert app.root.after.call_args.args[0]==1300
 
 def test_copy_failure_reports_failure_without_exception_or_success_text():
     app=make_app()
@@ -54,7 +56,7 @@ def test_reentrant_failure_keeps_its_own_message_and_expiry():
         if not nested[0]:
             nested[0]=True
             app.show_copy_feedback('コピーできませんでした',False)
-    app.fit_height.side_effect=fit
+    app.root.update_idletasks.side_effect=fit
     app.show_copy_feedback('コピーしました',True)
     assert app.copy_feedback.configure.call_args.kwargs['text']=='コピーできませんでした'
     app.root.after.assert_called_once()
