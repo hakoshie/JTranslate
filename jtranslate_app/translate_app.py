@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import queue
+from pathlib import Path
 import threading
 import tkinter as tk
 import tkinter.font as tkfont
@@ -16,6 +17,9 @@ from .hotkey import GlobalHotkey
 from .tray import TrayIcon
 from .translation import JapaneseTranslator, capture_selected
 from .popup_geometry import constrain_rect, resize_rect
+
+
+ICON_PATH = Path(__file__).resolve().parents[1] / 'assets' / 'jtranslate-d-yaku.ico'
 
 
 class TranslationApp:
@@ -76,9 +80,10 @@ class TranslationApp:
             handle.bind('<B1-Motion>',self.resize_move)
             handle.bind('<ButtonRelease-1>',self.resize_end)
             self.resize_handles[edge] = handle
-        image = Image.new('RGB', (64, 64), '#1868b7')
-        ImageDraw.Draw(image).text((20, 15), 'T', fill='white', stroke_width=2)
+        with Image.open(ICON_PATH.with_suffix('.png')) as source_icon:
+            image = source_icon.copy()
         self.icon = TrayIcon('JTranslate', image, 'JTranslate — Ctrl+Mで日本語訳',
+            icon_file=ICON_PATH,
             menu=pystray.Menu(
                 pystray.MenuItem('翻訳結果を表示', lambda *_: self.events.put(('show',))),
                 pystray.MenuItem('一時停止', lambda *_: self.events.put(('pause',)),
