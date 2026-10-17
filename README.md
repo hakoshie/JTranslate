@@ -83,6 +83,9 @@ Ctrl+Cも送信しません。空選択・非対応欄・パスワード欄・�
 ランタイムは同梱のPNG／ICOだけを使用し、フォントファイルを再配布しません。
 再生成する場合はWindows上の`tools/render_icons.py --output <出力先>`を使用します。
 
+Windows通知にも専用の32pxアイコンを明示し、通知元ウィンドウの大小アイコンと
+アプリ識別子`hakoshie.JTranslate`を設定します。古い通知履歴やOS全体のキャッシュは変更しません。
+
 ## 開発・テスト
 
 ```powershell
@@ -91,6 +94,7 @@ Ctrl+Cも送信しません。空選択・非対応欄・パスワード欄・�
 $env:PYTHONPATH = (Get-Location).Path
 .\.venv\Scripts\python.exe tests\windows_resize_smoke.py
 .\.venv\Scripts\python.exe tests\windows_translation_smoke.py
+.\.venv\Scripts\python.exe tests\windows_notification_smoke.py
 ```
 
 Windows実動テストは合成文だけを使い、翻訳応答・認証はテスト用データに置き換えます。

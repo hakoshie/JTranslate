@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw
 
 from .config import Settings, get_api_key
 from .hotkey import GlobalHotkey
-from .tray import TrayIcon
+from .tray import TrayIcon, set_app_identity
 from .translation import JapaneseTranslator, capture_selected
 from .popup_geometry import constrain_rect, resize_rect
 from .reasoning import ReasoningConfigurationError, validate_effort
@@ -312,6 +312,7 @@ def main():
             kernel.CloseHandle(ctypes.c_void_p(mutex))
         return
     try:
+        set_app_identity("hakoshie.JTranslate")
         TranslationApp().run()
     finally:
         kernel.CloseHandle(ctypes.c_void_p(mutex))
