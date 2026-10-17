@@ -17,3 +17,5 @@ settings.json
 *.lnk
 *-TEST-RESULTS.*
 translation-*.png
+
+notification-*.png

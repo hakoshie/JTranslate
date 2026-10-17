@@ -312,7 +312,7 @@ def main():
             kernel.CloseHandle(ctypes.c_void_p(mutex))
         return
     try:
-        set_app_identity("hakoshie.JTranslate")
+        set_app_identity("JTranslate", "JTranslate", ICON_PATH.with_suffix(".png"))
         TranslationApp().run()
     finally:
         kernel.CloseHandle(ctypes.c_void_p(mutex))
