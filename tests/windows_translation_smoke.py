@@ -27,7 +27,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
 faulthandler.dump_traceback_later(100)
 
-def debug_capture():
+def debug_capture(expected_window=None):
     import traceback
     try:
         if not activate_window(top):
@@ -44,7 +44,7 @@ def debug_capture():
         name = ctypes.create_unicode_buffer(128)
         user.GetClassNameW(ctypes.c_void_p(focus), name, 128)
         print('focus class:', name.value, 'test focused:', focus == edit, flush=True)
-        result = real_capture()
+        result = real_capture(expected_window=expected_window)
         print('synthetic selection:', repr(result), flush=True)
         return result
     except Exception:
@@ -139,8 +139,9 @@ with ClipboardSnapshot():
                 app.title.event_generate('<B1-Motion>', x=105, y=65, rootx=start[0]+105, rooty=start[1]+65)
                 app.root.update()
                 check('drag moves popup', app.root.winfo_x() == start[0]+100)
-                app.menu.invoke(0)
-                check('context menu copy Unicode', pyperclip.paste() == app.result)
+                app.text.event_generate('<Button-3>',x=20,y=20)
+                app.root.update()
+                check('one right click copies full Unicode result', pyperclip.paste() == app.result)
                 app.display(('Long Japanese paragraph 日本語🌏\n' * 300))
                 app.root.update()
                 check('long text scrolls', app.text.yview()[1] < 1)

@@ -110,24 +110,15 @@ def test_long_text_stops_after_cancellation(monkeypatch):
     assert len(calls) == 1
 
 
-def test_outside_click_does_not_close_popup_or_menu():
+def test_contains_point_in_popup():
     app = TranslationApp.__new__(TranslationApp)
     app.root = Mock()
-    app.root.winfo_viewable.return_value = True
     app.root.winfo_rootx.return_value = 100
     app.root.winfo_rooty.return_value = 100
     app.root.winfo_width.return_value = 500
     app.root.winfo_height.return_value = 300
-    app.menu = Mock()
-    app.menu.winfo_ismapped.return_value = False
     assert app.contains_point(120, 120)
     assert not app.contains_point(20, 20)
-    app.menu.winfo_ismapped.return_value = True
-    app.menu.winfo_rootx.return_value = 600
-    app.menu.winfo_rooty.return_value = 400
-    app.menu.winfo_width.return_value = 150
-    app.menu.winfo_height.return_value = 40
-    assert app.contains_point(650, 410)
 
 
 def test_dismissed_result_does_not_reopen_popup():

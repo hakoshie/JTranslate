@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 from ctypes import wintypes
 
+from .browser_clipboard import copy_browser_selection
 from .converter import JapaneseConverter
 from .selection import foreground_window, _wait_for_hotkey_release
 
@@ -76,13 +77,23 @@ def normalize_prose_breaks(text):
 
 
 def read_selection():
-    """Read explicit UIA selection without issuing Ctrl+C or touching clipboard.
-
-    This also avoids editors whose Ctrl+C copies an unselected current line.
-    """
+    """Prefer explicit native/UIA selection; use a fresh browser copy when necessary."""
     native = read_native_edit()
     if native is not None:
         return native
+    data = read_uia_selection()
+    if data['status'] == 'blocked':
+        return ''
+    if data.get('text', '').strip():
+        return data['text']
+    if data.get('copy_safe', False):
+        return copy_browser_selection() or ''
+    if data['status'] == 'unsupported':
+        raise RuntimeError('このアプリから選択文を取得できませんでした。')
+    return ''
+
+
+def read_uia_selection():
     script = Path(__file__).with_name('read-selection.ps1')
     result = subprocess.run(
         ['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', str(script)],
@@ -90,10 +101,7 @@ def read_selection():
         creationflags=subprocess.CREATE_NO_WINDOW)
     if result.returncode:
         raise RuntimeError('選択範囲を取得できませんでした。')
-    data = json.loads(result.stdout)
-    if data['status'] == 'unsupported':
-        raise RuntimeError('このアプリは選択テキストの取得に対応していません。')
-    return data['text']
+    return json.loads(result.stdout)
 
 
 def read_native_edit():
@@ -133,8 +141,8 @@ def read_native_edit():
     return text.value.encode('utf-16-le')[start.value*2:end.value*2].decode('utf-16-le')
 
 
-def capture_selected(read=read_selection):
-    window = foreground_window()
+def capture_selected(read=read_selection, expected_window=None):
+    window = expected_window if expected_window is not None else foreground_window()
     _wait_for_hotkey_release()
     if window != foreground_window():
         return None

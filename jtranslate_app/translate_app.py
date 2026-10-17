@@ -14,6 +14,7 @@ from PIL import Image, ImageDraw
 
 from .config import Settings, get_api_key
 from .hotkey import GlobalHotkey
+from .selection import foreground_window
 from .tray import TrayIcon, set_app_identity
 from .translation import JapaneseTranslator, capture_selected
 from .popup_geometry import constrain_rect, resize_rect
@@ -61,10 +62,8 @@ class TranslationApp:
         self.text.configure(yscrollcommand=scroll.set)
         scroll.pack(side='right', fill='y')
         self.text.pack(fill='both', expand=True)
-        self.menu = tk.Menu(self.root, tearoff=False)
-        self.menu.add_command(label='翻訳結果をコピー', command=self.copy_result)
-        self.text.bind('<Button-3>', self.context_menu)
-        self.root.bind('<Button-3>', self.context_menu)
+        self.text.bind('<Button-3>',self.copy_on_right_click)
+        self.root.bind('<Button-3>',self.copy_on_right_click)
         self.resize_handles = {}
         for edge,cursor in {'n':'size_ns','s':'size_ns','e':'size_we','w':'size_we',
                             'nw':'size_nw_se','se':'size_nw_se','ne':'size_ne_sw','sw':'size_ne_sw'}.items():
@@ -155,16 +154,11 @@ class TranslationApp:
             if grab:
                 grab.grab_release()
             self.resizing = None
-        self.menu.unpost()
         self.root.withdraw()
 
     def contains_point(self, x, y):
-        for widget in (self.root, self.menu):
-            if widget.winfo_ismapped():
-                left, top = widget.winfo_rootx(), widget.winfo_rooty()
-                if left <= x < left+widget.winfo_width() and top <= y < top+widget.winfo_height():
-                    return True
-        return False
+        left, top = self.root.winfo_rootx(), self.root.winfo_rooty()
+        return left <= x < left+self.root.winfo_width() and top <= y < top+self.root.winfo_height()
 
     def dismiss_outside(self):
         user = ctypes.windll.user32
@@ -198,12 +192,9 @@ class TranslationApp:
         self.root.deiconify()
         self.root.lift()
 
-    def context_menu(self, event):
-        self.menu.entryconfigure(0, state='normal' if self.result else 'disabled')
-        try:
-            self.menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            self.menu.grab_release()
+    def copy_on_right_click(self, event):
+        # A single right click copies the complete result, including off-screen text.
+        self.copy_result()
         return 'break'
 
     def copy_result(self):
@@ -213,12 +204,13 @@ class TranslationApp:
     def request(self):
         if self.closed or self.paused or not self.busy.acquire(False):
             return
-        self.events.put(('begin',))
+        self.events.put(('begin', foreground_window()))
 
-    def worker(self, generation):
+    def worker(self, generation, source_window=None):
         try:
             try:
-                selected = capture_selected()
+                selected = (capture_selected(expected_window=source_window)
+                            if source_window is not None else capture_selected())
             except Exception:
                 self.events.put(('message', generation,
                     'この入力欄から選択文を取得できませんでした。対応する本文・入力欄で文章を選択してお試しください。'))
@@ -271,7 +263,7 @@ class TranslationApp:
             elif kind == 'begin':
                 self.generation += 1
                 self.result = ''
-                threading.Thread(target=self.worker, args=(self.generation,), daemon=True).start()
+                threading.Thread(target=self.worker, args=(self.generation,event[1] if len(event)>1 else None), daemon=True).start()
             elif len(event) > 1 and event[1] == self.generation:
                 if kind == 'result':
                     self.result = event[2]
