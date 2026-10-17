@@ -17,16 +17,16 @@ try:
     app.user_size=(320,100)
     with patch.object(app,'work_area',return_value=(0,0,1000,800)):
         show(message)
-        assert app.root.winfo_width()>=440,'error must expand small saved width'
+        assert app.root.winfo_width()==320,'error must respect manual width'
         assert app.root.winfo_height()>100,'error must expand small saved height'
         assert app.text.yview()[1]==1.0,'short error must fit without scrolling'
         assert app.text.bbox('end-2c') is not None,'last error character must be visible'
         assert app.user_size==(320,100),'automatic error expansion must preserve translation preference'
-        checks.extend(['small saved size expanded','short error fully visible','translation size preserved'])
+        checks.extend(['small saved height expanded with width retained','short error fully visible','translation size preserved'])
         app.display('Synthetic translation')
         app.root.update()
-        assert (app.root.winfo_width(),app.root.winfo_height())==(320,100)
-        checks.append('translation returns to manual size')
+        assert app.root.winfo_width()==320 and app.text.yview()[1]==1.0
+        checks.append('translation retains manual width and fits height')
     for dpi in (96,144,192):
         app.root.tk.call('tk','scaling',dpi/72)
         font=tkfont.Font(root=app.root,family='Yu Gothic UI',size=12)

@@ -148,3 +148,32 @@ def test_incomplete_translation_is_not_shown_as_complete():
     converter.client.responses.create.return_value = SimpleNamespace(output_text='partial', status='incomplete')
     with pytest.raises(RuntimeError):
         converter.convert('Long text')
+
+
+def test_inflight_chunk_finishes_but_cancelled_request_sends_no_next_chunk(monkeypatch):
+    entered, release, cancelled = threading.Event(), threading.Event(), threading.Event()
+    calls, outcomes = [], []
+    def convert(self, text, previous=None):
+        calls.append(text)
+        entered.set()
+        assert release.wait(3)
+        return 'synthetic translated chunk'
+    monkeypatch.setattr(JapaneseConverter, 'convert', convert)
+    converter = translation.JapaneseTranslator('test', 'gpt-6-luna')
+    def run():
+        try:
+            converter.convert('synthetic text ' * 1000, cancelled=cancelled.is_set)
+        except InterruptedError:
+            outcomes.append('discarded')
+    worker = threading.Thread(target=run)
+    worker.start()
+    try:
+        assert entered.wait(3)
+        cancelled.set()
+        assert worker.is_alive()  # Esc cannot interrupt the current provider call.
+        assert len(calls) == 1
+    finally:
+        release.set()
+        worker.join(3)
+    assert not worker.is_alive()
+    assert outcomes == ['discarded'] and len(calls) == 1

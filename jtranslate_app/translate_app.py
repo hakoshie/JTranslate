@@ -5,7 +5,6 @@ import queue
 from pathlib import Path
 import threading
 import tkinter as tk
-import tkinter.font as tkfont
 from tkinter import ttk, messagebox
 
 import pyperclip
@@ -61,10 +60,17 @@ class TranslationApp:
         ttk.Button(header, text='×', width=3, command=self.hide).pack(side='right')
         self.text = tk.Text(content, wrap='word', font=('Yu Gothic UI', 12),
                             relief='flat', padx=12, pady=8, state='disabled')
-        scroll = ttk.Scrollbar(content, command=self.text.yview)
-        self.text.configure(yscrollcommand=scroll.set)
-        scroll.pack(side='right', fill='y')
+        self.scroll = ttk.Scrollbar(content, command=self.text.yview)
+        self.text.configure(yscrollcommand=self.scroll.set)
         self.text.pack(fill='both', expand=True)
+        self.base_title = self.title.cget('text')
+        self._layout_active = False
+        self._layout_dirty = False
+        self._layout_revision = 0
+        self._layout_request = 0
+        self._layout_timer = None
+        self._layout_key = None
+        self.root.bind('<Configure>', self.layout_changed)
         self.text.bind('<Button-3>',self.copy_on_right_click)
         self.root.bind('<Button-3>',self.copy_on_right_click)
         self.resize_handles = {}
@@ -110,17 +116,23 @@ class TranslationApp:
 
     def drag_move(self, event):
         x,y,w,h = constrain_rect((event.x_root-self.drag[0],event.y_root-self.drag[1],
-                                 self.root.winfo_width(),self.root.winfo_height()),self.work_area())
-        self.root.geometry(f'{w}x{h}{x:+d}{y:+d}')
+                                 self.root.winfo_width(),self.root.winfo_height()),
+                                 self.work_area((event.x_root,event.y_root)))
+        self.root.geometry(f'{w}x{h}+{x}+{y}')
 
-    def work_area(self):
+    def work_area(self, anchor=None):
         from ctypes import wintypes
         class MonitorInfo(ctypes.Structure):
             _fields_ = [('size',wintypes.DWORD),('monitor',wintypes.RECT),
                         ('work',wintypes.RECT),('flags',wintypes.DWORD)]
         user = ctypes.WinDLL('user32')
         user.MonitorFromWindow.restype = ctypes.c_void_p
-        monitor = user.MonitorFromWindow(ctypes.c_void_p(self.root.winfo_id()),2)
+        if anchor is None:
+            monitor = user.MonitorFromWindow(ctypes.c_void_p(self.root.winfo_id()),2)
+        else:
+            user.MonitorFromPoint.restype = ctypes.c_void_p
+            user.MonitorFromPoint.argtypes = (wintypes.POINT,wintypes.DWORD)
+            monitor = user.MonitorFromPoint(wintypes.POINT(*anchor),2)
         info = MonitorInfo()
         info.size = ctypes.sizeof(info)
         if user.GetMonitorInfoW(ctypes.c_void_p(monitor),ctypes.byref(info)):
@@ -140,7 +152,7 @@ class TranslationApp:
             left,top,w,h = resize_rect(rect,edge,event.x_root-x,event.y_root-y,self.work_area(),
                 getattr(self,'popup_minimum',(320,100)))
             self.user_size = (w,h)
-            self.root.geometry(f'{w}x{h}{left:+d}{top:+d}')
+            self.root.geometry(f'{w}x{h}+{left}+{top}')
         return 'break'
 
     def resize_end(self,event):
@@ -148,7 +160,9 @@ class TranslationApp:
         grab=self.root.grab_current()
         if grab:
             grab.grab_release()
+        self.root.update_idletasks()
         self.resizing = None
+        self.fit_height()
         return 'break'
 
     def hide(self):
@@ -175,48 +189,106 @@ class TranslationApp:
                 self.hide()
         self.mouse_down, self.escape_down = down, escape
 
+    def layout_changed(self, event):
+        if event.widget is not self.root or self.resizing:
+            return
+        if self._layout_active:
+            self._layout_dirty = True
+            return
+        if self._layout_timer is None and self.root.winfo_viewable():
+            self._layout_timer = self.root.after_idle(self.refit_if_changed)
+
+    def refit_if_changed(self):
+        self._layout_timer = None
+        if self.closed or self.resizing or not self.root.winfo_viewable():
+            return
+        if self._layout_active:
+            self._layout_dirty = True
+            return
+        if self._layout_dirty or self.layout_key() != self._layout_key:
+            self.fit_height()
+
+    def layout_key(self):
+        return (self.root.winfo_width(),self.root.winfo_height(),
+                self.work_area(),self.root.winfo_fpixels('1i'))
+
+    def fit_height(self, bounds=None):
+        # Tk measures actual wrapped display lines, including Unicode and DPI.
+        if self._layout_active:
+            self._layout_request += 1
+            self._layout_dirty = True
+            return
+        if not self.root.winfo_viewable():
+            return
+        self._layout_active = True
+        self._layout_dirty = False
+        content_revision,fit_request = self._layout_revision,self._layout_request
+        try:
+            bounds = bounds or self.work_area()
+            self.scroll.pack_forget()
+            self.root.update()
+            if self.closed or not self.root.winfo_viewable():
+                return
+            def required_height():
+                pixels = self.text.count('1.0','end','update','ypixels')
+                pixels = (pixels[0] if isinstance(pixels,tuple) else pixels) or 0
+                chrome = self.root.winfo_height()-self.text.winfo_height()
+                padding = 2*sum(int(self.text.cget(option)) for option in
+                                ('pady','borderwidth','highlightthickness'))
+                return max(self.popup_minimum[1],chrome+padding+pixels+4)
+            measured_width = self.root.winfo_width()
+            height = required_height()
+            if height > bounds[3]-bounds[1]:
+                self.scroll.pack(side='right',fill='y',before=self.text)
+                self.root.update()
+                if self.closed or not self.root.winfo_viewable():
+                    return
+                height = required_height()
+            x,y,w,h = constrain_rect((self.root.winfo_x(),self.root.winfo_y(),
+                self.root.winfo_width(),height),bounds,self.popup_minimum)
+            measured = (measured_width,bounds,self.root.winfo_fpixels('1i'),
+                        content_revision,fit_request)
+            # An explicit plus also represents absolute negative monitor coordinates.
+            self.root.geometry(f'{w}x{h}+{x}+{y}')
+            self.root.update()
+            if not self.closed:
+                actual = (self.root.winfo_width(),self.work_area(),self.root.winfo_fpixels('1i'),
+                          self._layout_revision,self._layout_request)
+                self._layout_dirty = actual != measured
+                if not self._layout_dirty:
+                    self._layout_key = self.layout_key()
+        finally:
+            self._layout_active = False
+            if not self.closed and self._layout_dirty and self._layout_timer is None:
+                self._layout_timer = self.root.after_idle(self.refit_if_changed)
+
     def display(self, text, kind='result'):
+        self._layout_revision += 1
+        self.title.configure(text=('翻訳中' if kind=='loading' else
+            ('お知らせ' if kind=='message' else self.base_title)+'（Escで閉じる）'))
         self.text.configure(state='normal')
         self.text.delete('1.0', 'end')
         self.text.insert('1.0', text)
         self.text.configure(state='disabled')
-        self.text.yview_moveto(0)
-        font = tkfont.Font(font=self.text.cget('font'))
-        width = self.user_size[0] if self.user_size else 540
-        available = max(1,width-40)
-        lines = sum(max(1, (font.measure(line)+available-1)//available) for line in text.split('\n'))
-        height = min(360, max(90, 48+lines*font.metrics('linespace')))
-        if self.user_size:
-            width,height = self.user_size
-        bounds = self.work_area()
-        if kind == 'message':
-            scale=max(.75,self.root.winfo_fpixels('1i')/96)
-            self.popup_minimum=(min(round(440*scale),bounds[2]-bounds[0]),
-                                min(round(140*scale),bounds[3]-bounds[1]))
-            width=min(bounds[2]-bounds[0],max(width,round(540*scale)))
-            height=self.popup_minimum[1]
-        else:
-            self.popup_minimum=(320,100)
+        visible = self.root.winfo_viewable()
+        anchor = None if visible else self.root.winfo_pointerxy()
+        bounds = self.work_area(anchor)
+        self.popup_minimum = (min(320,bounds[2]-bounds[0]),min(100,bounds[3]-bounds[1]))
         self.root.minsize(*self.popup_minimum)
-        x,y,width,height = constrain_rect((self.root.winfo_x(),self.root.winfo_y(),width,height),bounds,
-                                          self.popup_minimum)
-        if not self.root.winfo_viewable():
-            x,y,width,height = constrain_rect((self.root.winfo_pointerx()+16,
-                self.root.winfo_pointery()+16,width,height),bounds)
-        self.root.geometry(f'{width}x{height}{x:+d}{y:+d}')
-        self.root.deiconify()
-        self.root.lift()
-        if kind == 'message':
-            # Measure Tk's actual wrapped display lines at the current font/DPI.
+        width = self.user_size[0] if self.user_size else 540
+        x,y = (self.root.winfo_x(),self.root.winfo_y()) if visible else (anchor[0]+16,anchor[1]+16)
+        x,y,width,height = constrain_rect((x,y,width,self.popup_minimum[1]),bounds,self.popup_minimum)
+        layout_was_active = self._layout_active
+        self._layout_active = True
+        try:
+            self.root.geometry(f'{width}x{height}+{x}+{y}')
+            self.root.deiconify()
+            self.root.lift()
             self.root.update_idletasks()
-            content_pixels=self.text.count('1.0','end-1c','ypixels')
-            content_pixels=(content_pixels[0] if content_pixels else 0)+font.metrics('linespace')
-            chrome=self.root.winfo_height()-self.text.winfo_height()
-            padding=2*sum(int(self.text.cget(option)) for option in ('pady','borderwidth','highlightthickness'))
-            height=min(bounds[3]-bounds[1],max(self.popup_minimum[1],chrome+padding+content_pixels+4))
-            x,y,width,height=constrain_rect((x,y,width,height),bounds,self.popup_minimum)
-            self.root.geometry(f'{width}x{height}{x:+d}{y:+d}')
-            self.root.update_idletasks()
+        finally:
+            self._layout_active = layout_was_active
+        self.fit_height(bounds)
+        if not self.closed:
             self.text.yview_moveto(0)
 
     def display_message(self,text):
@@ -307,7 +379,7 @@ class TranslationApp:
                     self.result = event[2]
                     self.display(self.result)
                 elif kind == 'loading':
-                    self.display_message('日本語に翻訳中…（Escで表示を閉じる）')
+                    self.display('日本語に翻訳中…\nEsc：結果表示を取り消す\n進行中の通信は完了まで続きます。',kind='loading')
                 elif kind == 'message':
                     self.display_message(event[2])
         self.root.after(30, self.poll)
