@@ -7,4 +7,9 @@ if (-not (Test-Path -LiteralPath $Python)) {
 }
 & $Python -m pip install -r (Join-Path $ProjectDir 'requirements.txt')
 if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed.' }
+$Shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $ProjectDir 'JTranslate.lnk'))
+$Shortcut.TargetPath = Join-Path $ProjectDir '.venv\Scripts\pythonw.exe'
+$Shortcut.Arguments = '"' + (Join-Path $ProjectDir 'translate.pyw') + '"'
+$Shortcut.WorkingDirectory = $ProjectDir
+$Shortcut.Save()
 Write-Output 'Ready. Run JTranslate.cmd. No startup or login settings were changed.'

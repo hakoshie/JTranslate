@@ -75,5 +75,3 @@ class ClipboardSnapshot:
                 self.user.CloseClipboard()
         finally:
             self.cleanup()
-
-
