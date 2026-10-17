@@ -11,7 +11,20 @@ from .capture_errors import CaptureFailure
 from . import capture_diagnostics as diagnostics
 
 _capture_lock=threading.Lock()
+_recovery_pending=threading.Event()
 _BROWSERS={'chrome.exe','msedge.exe','firefox.exe','brave.exe','vivaldi.exe','opera.exe'}
+
+def _pump_window_messages(user,window):
+    """Clipboard writers synchronously notify the old owner while holding the lock."""
+    if not window:return
+    user.PeekMessageW.argtypes=(ctypes.POINTER(wintypes.MSG),wintypes.HWND,
+                               wintypes.UINT,wintypes.UINT,wintypes.UINT)
+    message=wintypes.MSG()
+    for _ in range(16):
+        # PeekMessage also dispatches cross-thread sent messages, even if it returns 0.
+        if not user.PeekMessageW(ctypes.byref(message),window,0,0,1):break
+        user.TranslateMessage(ctypes.byref(message))
+        user.DispatchMessageW(ctypes.byref(message))
 
 def browser_process(window):
     user=ctypes.WinDLL('user32',use_last_error=True)
@@ -63,12 +76,18 @@ class ClipboardCapture:
         self.ole.OleDuplicateData.restype=wintypes.HANDLE
         self.ole.OleDuplicateData.argtypes=(wintypes.HANDLE,ctypes.c_ushort,ctypes.c_uint)
         self.window=None;self.handles=[];self.sequence=None;self.restored=False
+        self.deferred=False;self._old_owner=None
         self.marker='JTranslate-selection-'+uuid.uuid4().hex
+
+    def pump_messages(self):
+        _pump_window_messages(self.user,self.window)
 
     @contextmanager
     def opened(self):
         deadline=time.monotonic()+1
+        self.pump_messages()
         while not self.user.OpenClipboard(ctypes.c_void_p(self.window)):
+            self.pump_messages()
             if time.monotonic()>=deadline:raise CaptureFailure('clipboard_busy')
             time.sleep(.01)
         try:yield
@@ -132,18 +151,22 @@ class ClipboardCapture:
             if not owner:raise CaptureFailure('copy_owner_missing')
             if pid.value!=browser_pid:raise CaptureFailure('clipboard_changed')
             self.sequence=self.user.GetClipboardSequenceNumber()
-            handle=self.user.GetClipboardData(13)
-            if not handle:return None
-            size=self.kernel.GlobalSize(handle)
-            if size>2_000_002:raise CaptureFailure('selection_too_large')
-            pointer=self.kernel.GlobalLock(handle)
-            if not pointer:raise CaptureFailure('clipboard_access')
-            try:text=_decode_unicode(ctypes.string_at(pointer,size))
-            finally:self.kernel.GlobalUnlock(handle)
+            text=self.read_unicode_locked()
+            if text is None:return None
             self.sequence=self.user.GetClipboardSequenceNumber()
             if text==self.marker:return None
             self.restore_locked()
             return text
+
+    def read_unicode_locked(self):
+        handle=self.user.GetClipboardData(13)
+        if not handle:return None
+        size=self.kernel.GlobalSize(handle)
+        if size>2_000_002:raise CaptureFailure('selection_too_large')
+        pointer=self.kernel.GlobalLock(handle)
+        if not pointer:raise CaptureFailure('clipboard_access')
+        try:return _decode_unicode(ctypes.string_at(pointer,size))
+        finally:self.kernel.GlobalUnlock(handle)
 
     def cleanup(self):
         for fmt,handle in self.handles:
@@ -160,15 +183,60 @@ class ClipboardCapture:
             self.handles.pop(0)
         self.restored=True
 
+    def try_pending_restore(self):
+        with self.opened():
+            owner=self.user.GetClipboardOwner()
+            if owner and owner not in (self.window,self._old_owner):return 'superseded'
+            try:text=self.read_unicode_locked()
+            except ValueError:return 'superseded'
+            # Only our exact temporary marker permits a delayed restore.
+            if text!=self.marker:return 'superseded'
+            self.restore_locked()
+            return 'restored'
+
+    def defer_restore(self):
+        # Retain the duplicated original in RAM, rather than free it on a busy lock.
+        self.deferred=True
+        _recovery_pending.set()
+        self._old_owner=self.window
+        self.user.DestroyWindow(ctypes.c_void_p(self.window))
+        self.window=None
+        diagnostics.record('restore_wait')
+        def recover():
+            try:
+                while not self.window:
+                    self.window=self.user.CreateWindowExW(0,'STATIC','JTranslate pending restore',0,
+                                                         0,0,0,0,None,None,None,None)
+                    if not self.window:time.sleep(.1)
+                while True:
+                    try:
+                        status=self.try_pending_restore()
+                        diagnostics.record('restore_done',status=status)
+                        break
+                    except (CaptureFailure,OSError):
+                        time.sleep(.1)
+            finally:
+                self.cleanup()
+                _recovery_pending.clear()
+        threading.Thread(target=recover,daemon=True,name='JTranslate clipboard restore').start()
+
     def __exit__(self,*args):
         try:
             if not self.restored:
-                with self.opened():
-                    # A newer user/application copy wins over our saved snapshot.
-                    if self.sequence is not None and (self.user.GetClipboardSequenceNumber()==self.sequence
-                            or self.user.GetClipboardOwner()==self.window):
-                        self.restore_locked()
-        finally:self.cleanup()
+                try:
+                    with self.opened():
+                        # A newer user/application copy wins over our saved snapshot.
+                        if self.sequence is not None and (self.user.GetClipboardSequenceNumber()==self.sequence
+                                or self.user.GetClipboardOwner()==self.window):
+                            self.restore_locked()
+                except CaptureFailure as error:
+                    if error.code=='clipboard_busy' and self.user.GetClipboardOwner()==self.window:
+                        self.defer_restore()
+                        raise CaptureFailure('clipboard_restore_pending') from None
+                    raise
+        finally:
+            if not self.deferred:self.cleanup()
+
 
 def copy_browser_selection(window=None,foreground=None,send=None,timeout=1.5):
     if foreground is None:
@@ -178,18 +246,24 @@ def copy_browser_selection(window=None,foreground=None,send=None,timeout=1.5):
     pid=browser_process(window)
     diagnostics.record('browser_gate',supported=bool(pid),foreground_matches=foreground()==window)
     if not pid or foreground()!=window:return None
+    if _recovery_pending.is_set():raise CaptureFailure('clipboard_restore_pending')
     if not _capture_lock.acquire(False):return None
     try:
         with ClipboardCapture() as capture:
             if foreground()!=window:return None
-            diagnostics.record('copy_sent')
+            diagnostics.record('copy_sent',pump_active=True)
             (send or (lambda:keyboard.send('ctrl+c')))()
             deadline=time.monotonic()+timeout
             while time.monotonic()<deadline:
+                capture.pump_messages()
                 if foreground()!=window:return None
                 text=capture.fresh_text(pid)
                 if text is not None:return text
                 time.sleep(.015)
+            capture.pump_messages()
+            if foreground()==window:
+                text=capture.fresh_text(pid)
+                if text is not None:return text
             diagnostics.record('capture_failed',code='copy_timeout')
             raise CaptureFailure('copy_timeout')
     finally:_capture_lock.release()

@@ -86,6 +86,7 @@ def test_temporary_marker_restores_even_if_windows_updates_sequence():
     from jtranslate_app.browser_clipboard import ClipboardCapture
     capture=ClipboardCapture.__new__(ClipboardCapture)
     capture.restored=False
+    capture.deferred=False
     capture.sequence=10
     capture.window=42
     capture.opened=lambda:nullcontext()
@@ -103,6 +104,7 @@ def test_new_foreign_clipboard_is_never_overwritten_by_snapshot():
     from jtranslate_app.browser_clipboard import ClipboardCapture
     capture=ClipboardCapture.__new__(ClipboardCapture)
     capture.restored=False
+    capture.deferred=False
     capture.sequence=10
     capture.window=42
     capture.opened=lambda:nullcontext()
@@ -119,6 +121,7 @@ def test_atomic_restore_does_not_reopen_clipboard_later():
     from jtranslate_app.browser_clipboard import ClipboardCapture
     capture=ClipboardCapture.__new__(ClipboardCapture)
     capture.restored=True
+    capture.deferred=False
     capture.opened=Mock(side_effect=AssertionError('do not overwrite a subsequent user copy'))
     capture.cleanup=Mock()
     capture.__exit__(None,None,None)

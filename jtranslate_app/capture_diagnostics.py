@@ -3,13 +3,13 @@ import hashlib,json,os,re,threading,time,types
 from .config import data_dir
 from .capture_errors import MESSAGES
 
-REVISION=3
+REVISION=4
 _lock=threading.Lock()
 _EVENTS={'startup','request','wait_release','native','uia','browser_gate','snapshot','copy_sent',
-         'copy_wait','capture_done','capture_failed','provider_failed'}
-_BOOLEANS={'ctrl_down','m_down','can_copy','supported','foreground_matches'}
+         'copy_wait','capture_done','capture_failed','provider_failed','restore_wait','restore_done'}
+_BOOLEANS={'ctrl_down','m_down','can_copy','supported','foreground_matches','pump_active'}
 _NUMBERS={'elapsed_ms','formats','pid','revision'}
-_ENUMS={'status':{'selected','blocked','unsupported','empty','text','not_native','other'},
+_ENUMS={'status':{'selected','blocked','unsupported','empty','text','not_native','restored','superseded','other'},
         'owner':{'same_browser','our_marker','missing','other'},
         'error_type':{'OSError','RuntimeError','TimeoutExpired','JSONDecodeError','CaptureFailure','ValueError','UnicodeDecodeError','PermissionError','FileNotFoundError','AttributeError','TypeError','NameError','IndexError','other'}}
 
@@ -33,8 +33,8 @@ def record(event,**details):
     except (OSError,ValueError):pass
 
 def loaded_signature():
-    from .translation import capture_selected,read_selection
-    from .browser_clipboard import ClipboardCapture
+    from .translation import capture_selected,read_selection,_wait_for_hotkey_release
+    from .browser_clipboard import ClipboardCapture,copy_browser_selection
     from .translate_app import TranslationApp
     def freeze(value):
         if isinstance(value,types.CodeType):
@@ -46,7 +46,8 @@ def loaded_signature():
         if value is None or isinstance(value,(str,int,float,bool)):return value
         return type(value).__name__
     data=[freeze(fn.__code__) for fn in
-          (capture_selected,read_selection,ClipboardCapture.fresh_text,TranslationApp.display)]
+          (capture_selected,read_selection,_wait_for_hotkey_release,copy_browser_selection,
+           ClipboardCapture.fresh_text,ClipboardCapture.pump_messages,ClipboardCapture.__exit__,TranslationApp.display)]
     return hashlib.sha256(json.dumps(data,sort_keys=True,separators=(',',':')).encode()).hexdigest()[:12]
 
 def startup():

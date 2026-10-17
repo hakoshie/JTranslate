@@ -76,6 +76,10 @@ Chrome／Edge／Firefoxなどのブラウザプロセスに限定してCtrl+Cを
 既存クリップボードの本文は翻訳対象に使いません。コピー完了の更新番号と所有プロセスを確認し、
 空選択・パスワード欄・選択のない入力欄・取得中の別ウィンドウへの移動では送信しません。
 他アプリが途中でコピーした新しい内容は上書きせず、その取得を中止します。
+コピー待ち中も専用ウィンドウのWindows通知を処理し、ブラウザのコピーを待たせないようにします。
+使用中で直ちに復元できない場合は、元データをディスクへ保存せずアプリのRAM内に保持します。
+専用の一時マーカーが残る場合だけ後で復元し、新しいコピーがあれば上書きしません。
+復元待ちの案内中はJTranslateを終了せずお待ちください。
 画面全体の取得・画像・OCRは使いません。
 一部PDF描画領域や管理者アプリなど、選択取得できないアプリがあります。
 本文や認証情報はログへ記録しません。右クリックでコピーした結果は、そのままクリップボードに残します。
@@ -109,6 +113,7 @@ Windows通知にも専用の32pxアイコンを明示し、通知元ウィンド
 $env:PYTHONPATH = (Get-Location).Path
 .\.venv\Scripts\python.exe tests\windows_resize_smoke.py
 .\.venv\Scripts\python.exe tests\windows_error_layout_smoke.py
+.\.venv\Scripts\python.exe tests\windows_owner_message_smoke.py
 .\.venv\Scripts\python.exe tests\windows_right_click_smoke.py
 .\.venv\Scripts\python.exe tests\windows_translation_smoke.py
 .\.venv\Scripts\python.exe -m pytest -q tests\windows_clipboard_smoke.py
