@@ -25,7 +25,7 @@ def test_diagnostics_drop_text_credentials_urls_and_exception_messages():
 def test_startup_has_loaded_code_fingerprint_and_revision():
     diagnostics.startup()
     row=entries()[0]
-    assert row['revision']==6 and len(row['signature'])==12
+    assert row['revision']==7 and len(row['signature'])==12
     assert row['event']=='startup'
 
 def test_diagnostics_are_bounded():

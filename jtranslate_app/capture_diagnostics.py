@@ -3,7 +3,7 @@ import hashlib,json,os,re,threading,time,types
 from .config import data_dir
 from .capture_errors import MESSAGES
 
-REVISION=6
+REVISION=7
 _lock=threading.Lock()
 _EVENTS={'startup','request','wait_release','native','uia','browser_gate','snapshot','copy_sent',
          'copy_wait','capture_done','capture_failed','provider_failed','restore_wait','restore_done'}
@@ -49,7 +49,8 @@ def loaded_signature():
     data=[freeze(fn.__code__) for fn in
           (capture_selected,read_selection,_wait_for_hotkey_release,copy_browser_selection,
            ClipboardCapture.fresh_text,ClipboardCapture.pump_messages,ClipboardCapture.__exit__,TranslationApp.display,TranslationApp.fit_height,
-           TranslationApp.reflow_text,wrap_display_text,units,clusters)]
+           TranslationApp.reflow_text,TranslationApp.copy_result,TranslationApp.show_copy_feedback,
+           TranslationApp.clear_copy_feedback,TranslationApp.expire_copy_feedback,wrap_display_text,units,clusters)]
     return hashlib.sha256(json.dumps(data,sort_keys=True,separators=(',',':')).encode()).hexdigest()[:12]
 
 def startup():

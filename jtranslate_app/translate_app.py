@@ -56,10 +56,16 @@ class TranslationApp:
         header = ttk.Frame(content, padding=8)
         header.pack(fill='x')
         self.title = ttk.Label(header, text='⠿ 日本語訳')
-        self.title.pack(side='left', fill='x', expand=True)
         self.title.bind('<ButtonPress-1>', self.drag_start)
         self.title.bind('<B1-Motion>', self.drag_move)
-        ttk.Button(header, text='×', width=3, command=self.hide).pack(side='right')
+        self.close_button = ttk.Button(header,text='×',width=3,command=self.hide)
+        self.close_button.pack(side='right')
+        self.copy_button = ttk.Button(header,text='コピー',width=6,command=self.copy_result,state='disabled')
+        self.copy_button.pack(side='right',padx=(4,6))
+        self.title.pack(side='left',fill='x',expand=True)
+        self.copy_feedback = ttk.Label(content,text='',padding=(0,2))
+        self._copy_feedback_timer = None
+        self._copy_feedback_revision = 0
         self.text = tk.Text(content, wrap='none', font=('Yu Gothic UI', 12),
                             relief='flat', padx=12, pady=8, state='disabled')
         self.scroll = ttk.Scrollbar(content, command=self.text.yview)
@@ -170,6 +176,7 @@ class TranslationApp:
         return 'break'
 
     def hide(self):
+        self.clear_copy_feedback(refit=False)
         self.generation += 1
         if getattr(self,'resizing',None):
             grab=self.root.grab_current()
@@ -217,6 +224,8 @@ class TranslationApp:
                 self.work_area(),self.root.winfo_fpixels('1i'))
 
     def reflow_text(self):
+        self.copy_feedback.configure(wraplength=max(1,self.text.winfo_width()-24))
+        self.root.update_idletasks()
         font = tkfont.Font(font=self.text.cget('font'))
         width = max(1,self.text.winfo_width()-2*sum(int(self.text.cget(option))
                     for option in ('padx','borderwidth','highlightthickness')))
@@ -285,6 +294,8 @@ class TranslationApp:
                 self._layout_timer = self.root.after_idle(self.refit_if_changed)
 
     def display(self, text, kind='result'):
+        self.clear_copy_feedback(refit=False)
+        self.copy_button.configure(state='normal' if kind=='result' and self.result else 'disabled')
         self._layout_revision += 1
         self._display_source = text
         self.title.configure(text=('翻訳中' if kind=='loading' else
@@ -322,9 +333,41 @@ class TranslationApp:
         self.copy_result()
         return 'break'
 
+    def clear_copy_feedback(self, refit=True):
+        if getattr(self,'copy_feedback',None) is None:
+            return
+        self._copy_feedback_revision = getattr(self,'_copy_feedback_revision',0)+1
+        if self._copy_feedback_timer is not None:
+            self.root.after_cancel(self._copy_feedback_timer)
+            self._copy_feedback_timer = None
+        self.copy_feedback.pack_forget()
+        if refit and not self.closed and self.root.winfo_viewable():
+            self.fit_height()
+
+    def show_copy_feedback(self, text, success):
+        self.clear_copy_feedback(refit=False)
+        revision = self._copy_feedback_revision
+        self.copy_feedback.configure(text=text,foreground='#166534' if success else '#b91c1c')
+        self.copy_feedback.pack(fill='x',before=self.text,padx=12,pady=(0,4))
+        self.fit_height()
+        if revision == self._copy_feedback_revision and not self.closed and self.root.winfo_viewable():
+            self._copy_feedback_timer = self.root.after(1800 if success else 4000,
+                lambda: self.expire_copy_feedback(revision))
+
+    def expire_copy_feedback(self, revision):
+        if revision == self._copy_feedback_revision:
+            self.clear_copy_feedback()
+
     def copy_result(self):
-        if self.result:
+        if not self.result:
+            return False
+        try:
             pyperclip.copy(self.result)
+        except (pyperclip.PyperclipException,OSError):
+            self.show_copy_feedback('コピーできませんでした。もう一度お試しください。',False)
+            return False
+        self.show_copy_feedback('コピーしました',True)
+        return True
 
     def request(self):
         if self.closed or self.paused or not self.busy.acquire(False):
@@ -402,13 +445,14 @@ class TranslationApp:
                     self.result = event[2]
                     self.display(self.result)
                 elif kind == 'loading':
-                    self.display('日本語に翻訳中…\nEsc：結果表示を取り消す\n進行中の通信は完了まで続きます。',kind='loading')
+                    self.display('日本語に翻訳中…\nEsc：結果表示を取り消す（進行中の通信は完了まで続きます）',kind='loading')
                 elif kind == 'message':
                     self.display_message(event[2])
         self.root.after(30, self.poll)
 
     def quit(self):
         self.closed = True
+        self.clear_copy_feedback(refit=False)
         self.hotkey.stop()
         self.icon.stop()
         self.root.destroy()

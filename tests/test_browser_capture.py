@@ -65,6 +65,7 @@ def test_right_click_copies_entire_long_result(monkeypatch):
     from jtranslate_app import translate_app
     app=TranslationApp.__new__(TranslationApp)
     app.result=('Full Unicode result \u65e5\u672c\u8a9e\U0001f30f\n'*3000)
+    app.show_copy_feedback=Mock()
     copy=Mock()
     monkeypatch.setattr(translate_app.pyperclip,'copy',copy)
     assert app.copy_on_right_click(Mock())=='break'
