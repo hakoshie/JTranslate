@@ -275,13 +275,20 @@ def access_token(client_id: str) -> str:
         return profile["access_token"]
 
 
-def list_models(client_id: str) -> list[dict]:
+def list_models(client_id: str, include_capabilities: bool = False) -> list[dict]:
     try:
         response = httpx.get(RESOURCE + "/models", headers={
             "Authorization": "Bearer " + access_token(client_id)}, timeout=20)
         response.raise_for_status()
-        return [{"slug": model["slug"], "display_name": model.get("display_name", model["slug"])}
-                for model in response.json()["models"] if model.get("visibility") == "list"]
+        models=[]
+        for model in response.json()["models"]:
+            if model.get("visibility") != "list": continue
+            item={"slug":model["slug"],"display_name":model.get("display_name",model["slug"])}
+            if include_capabilities:
+                item["reasoning_efforts"]=[entry["effort"] for entry in model.get("supported_reasoning_levels",[]) or []
+                    if isinstance(entry,dict) and isinstance(entry.get("effort"),str)]
+            models.append(item)
+        return models
     except (httpx.HTTPError, ValueError, KeyError) as exc:
         raise AuthError("ChatGPTのモデル一覧を取得できません。接続を確認して再読み込みしてください。") from exc
 

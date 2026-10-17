@@ -1,42 +1,53 @@
-"""Explicit user-driven Sign in with ChatGPT for JTranslate's own storage."""
+"""Explicit per-user ChatGPT sign-in and validated Responses thinking settings."""
 import queue
 import threading
 import tkinter as tk
 from tkinter import ttk
 from . import chatgpt_auth
 from .config import Settings
+from .reasoning import supported_efforts, validate_effort, ReasoningConfigurationError
 
 
 def open_settings(parent):
     settings=Settings.load()
     window=tk.Toplevel(parent)
-    window.title('JTranslate 設定・ChatGPT接続')
+    window.title('JTranslate 設定・ChatGPTログイン')
     window.resizable(False,False)
     frame=ttk.Frame(window,padding=18)
     frame.pack(fill='both',expand=True)
-    source=tk.StringVar(value=settings.connection_source)
-    ttk.Label(frame,text='翻訳に使う接続').pack(anchor='w')
-    ttk.Radiobutton(frame,text='JTranslate専用のChatGPT接続',variable=source,value='jtranslate').pack(anchor='w')
-    ttk.Radiobutton(frame,text='このPCのJHenkan接続を共有（コピーしない）',variable=source,value='jhenkan').pack(anchor='w')
-    ttk.Label(frame,text='JTranslate専用アカウント').pack(anchor='w',pady=(12,0))
+    ttk.Label(frame,text='JTranslateにサインインするアカウント').pack(anchor='w')
     account=tk.StringVar()
-    account_box=ttk.Combobox(frame,textvariable=account,state='readonly',width=48)
+    account_box=ttk.Combobox(frame,textvariable=account,state='readonly',width=49)
     account_box.pack(fill='x',pady=4)
     accounts={}
-    selected=[settings.chatgpt_account if settings.connection_source=='jtranslate' else '']
+    selected=[settings.chatgpt_account]
+    catalog=dict(settings.reasoning_options) if isinstance(settings.reasoning_options,dict) else {}
     model=tk.StringVar(value=settings.model)
     ttk.Label(frame,text='モデル').pack(anchor='w',pady=(8,0))
-    model_box=ttk.Combobox(frame,textvariable=model,values=[settings.model,'gpt-6-luna'],width=48)
+    model_box=ttk.Combobox(frame,name='model',textvariable=model,values=[settings.model],state='readonly',width=49)
     model_box.pack(fill='x',pady=4)
-    ttk.Label(frame,text='新規ログインはブラウザーで本人確認・利用枠の許可を行います。\n'
-        '認証はJTranslate専用に保存し、JHenkanの接続は変更しません。',wraplength=430).pack(anchor='w',pady=8)
-    status=ttk.Label(frame,text='現在の接続: '+('JHenkan共有' if settings.connection_source=='jhenkan' else 'JTranslate専用'))
+    effort=tk.StringVar(value=settings.reasoning_effort)
+    ttk.Label(frame,text='Thinking level（推論の強さ）').pack(anchor='w',pady=(8,0))
+    effort_box=ttk.Combobox(frame,name='reasoning_effort',textvariable=effort,state='readonly',width=49)
+    effort_box.pack(fill='x',pady=4)
+    ttk.Label(frame,text='none：推論オフ／速度優先。高い設定は応答時間や利用枠が増える場合があります。',wraplength=440).pack(anchor='w')
+    ttk.Label(frame,text='未ログインなら Continue with ChatGPT からブラウザーで本人確認・利用許可を行ってください。\n'
+        '他のアプリのログインや設定は使用しません。',wraplength=440).pack(anchor='w',pady=10)
+    status=ttk.Label(frame,text='',wraplength=440)
     status.pack(anchor='w')
     results=queue.Queue()
     cancel=threading.Event()
     busy=[False]
+    poll_timer=[None]
 
-    def refresh():
+    def refresh_efforts(*_):
+        choices=supported_efforts(model.get(),catalog.get(model.get()))
+        effort_box.configure(values=choices,state='readonly' if choices else 'disabled')
+        try: validate_effort(model.get(),effort.get(),catalog.get(model.get()))
+        except ReasoningConfigurationError as exc: status.configure(text=str(exc))
+        else: status.configure(text='選択したThinking levelをそのまま送信します。')
+
+    def refresh_accounts():
         accounts.clear()
         for item in chatgpt_auth.accounts():
             label=item.get('email','account')+' ['+item['client_id'][-8:]+']'
@@ -47,27 +58,43 @@ def open_settings(parent):
 
     def changed(_event=None):
         selected[0]=accounts.get(account.get(),'')
+        catalog.clear()
+        refresh_efforts()
     account_box.bind('<<ComboboxSelected>>',changed)
+    model.trace_add('write',refresh_efforts)
+    effort.trace_add('write',refresh_efforts)
 
     def start(action):
         if busy[0]: return
+        if action=='models' and not selected[0]:
+            status.configure(text='先にContinue with ChatGPTからサインインしてください。')
+            return
         busy[0]=True
+        cid=selected[0]
         status.configure(text='ブラウザーで確認してください…' if action=='signin' else 'モデルを確認中…')
         signin.configure(state='disabled')
         def worker():
             try:
-                result=chatgpt_auth.sign_in(selected[0],cancel) if action=='signin' else chatgpt_auth.list_models(selected[0])
+                result=chatgpt_auth.sign_in(cid,cancel) if action=='signin' else chatgpt_auth.list_models(cid,include_capabilities=True)
                 results.put((action,result,None))
-            except Exception:
-                results.put((action,None,True))
+            except Exception: results.put((action,None,True))
         threading.Thread(target=worker,daemon=True).start()
 
     signin=ttk.Button(frame,text='Continue with ChatGPT',command=lambda:start('signin'))
     signin.pack(fill='x',pady=(10,4))
-    ttk.Button(frame,text='専用接続のモデル一覧を読み込む',command=lambda:start('models')).pack(fill='x')
+    ttk.Button(frame,text='このアカウントのモデル一覧を読み込む',command=lambda:start('models')).pack(fill='x')
+
+    def cleanup(event=None):
+        if event is not None and event.widget is not window: return
+        cancel.set()
+        if poll_timer[0] is not None:
+            try: parent.after_cancel(poll_timer[0])
+            except tk.TclError: pass
+            poll_timer[0]=None
+    window.bind('<Destroy>',cleanup)
 
     def close():
-        cancel.set()
+        cleanup()
         window.destroy()
     window.protocol('WM_DELETE_WINDOW',close)
 
@@ -75,25 +102,15 @@ def open_settings(parent):
         if busy[0]:
             status.configure(text='接続処理の完了を待つかキャンセルしてください。')
             return
-        if source.get()=='jtranslate':
-            if not selected[0] or not chatgpt_auth.connected(selected[0]):
-                status.configure(text='Continue with ChatGPTから接続してください。')
-                return
-            settings.chatgpt_account=selected[0]
-        else:
-            # Resolve the shared account from its own settings without copying credentials.
-            from .config import legacy_data_dir
-            import json
-            try:
-                legacy=json.loads((legacy_data_dir()/'settings.json').read_text(encoding='utf-8'))
-                if legacy.get('provider')!='chatgpt' or not legacy.get('chatgpt_account'):
-                    raise ValueError()
-                settings.chatgpt_account=legacy['chatgpt_account']
-            except (OSError,ValueError):
-                status.configure(text='共有できるJHenkanのChatGPT設定がありません。')
-                return
-        settings.connection_source=source.get()
-        settings.chatgpt_model=model.get().strip() or 'gpt-6-luna'
+        try: validate_effort(model.get(),effort.get(),catalog.get(model.get()))
+        except ReasoningConfigurationError as exc:
+            status.configure(text=str(exc));return
+        if not selected[0] or not chatgpt_auth.connected(selected[0]):
+            status.configure(text='Continue with ChatGPTからサインインしてください。');return
+        settings.chatgpt_account=selected[0]
+        settings.chatgpt_model=model.get()
+        settings.reasoning_effort=effort.get()
+        settings.reasoning_options=dict(catalog)
         settings.save()
         close()
 
@@ -109,18 +126,20 @@ def open_settings(parent):
         else:
             busy[0]=False
             signin.configure(state='normal')
-            if error:
-                status.configure(text='接続できませんでした。通信とブラウザーの許可を確認してください。')
+            if error: status.configure(text='接続できませんでした。通信とブラウザーの許可を確認してください。')
             elif action=='signin':
                 selected[0]=value
-                source.set('jtranslate')
-                refresh()
-                status.configure(text='JTranslate専用の接続が完了しました。「保存」で利用を切り替えます。')
+                catalog.clear()
+                refresh_accounts()
+                start('models')
             else:
+                catalog.clear()
+                catalog.update({item['slug']:item.get('reasoning_efforts',[]) for item in value})
                 model_box.configure(values=[item['slug'] for item in value])
-                status.configure(text='専用アカウントで使えるモデルを選択してください。')
-        parent.after(100,poll)
-    refresh()
+                refresh_efforts()
+        poll_timer[0]=parent.after(100,poll)
+    refresh_accounts()
+    refresh_efforts()
     poll()
     window.lift()
     return window

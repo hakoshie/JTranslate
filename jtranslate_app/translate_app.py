@@ -17,6 +17,8 @@ from .hotkey import GlobalHotkey
 from .tray import TrayIcon
 from .translation import JapaneseTranslator, capture_selected
 from .popup_geometry import constrain_rect, resize_rect
+from .reasoning import ReasoningConfigurationError, validate_effort
+from . import chatgpt_auth
 
 
 ICON_PATH = Path(__file__).resolve().parents[1] / 'assets' / 'jtranslate-d-yaku.ico'
@@ -229,12 +231,16 @@ class TranslationApp:
                 return
             self.events.put(('loading', generation))
             settings = Settings.load()
+            validate_effort(settings.model,settings.reasoning_effort,settings.reasoning_options.get(settings.model))
             converter = JapaneseTranslator(
-                get_api_key(settings.provider, settings.chatgpt_account,connection_source=settings.connection_source), settings.model,
+                get_api_key(settings.provider, settings.chatgpt_account), settings.model,
                 settings.api_timeout_seconds, settings.provider,
-                diagnostic_text_logging=False, reasoning_effort=settings.reasoning_effort)
+                diagnostic_text_logging=False, reasoning_effort=settings.reasoning_effort,
+                supported_reasoning_efforts=settings.reasoning_options.get(settings.model))
             result = converter.convert(selected, cancelled=lambda: self.closed or generation != self.generation)
             self.events.put(('result', generation, result))
+        except ReasoningConfigurationError as exc:
+            self.events.put(('message',generation,str(exc)))
         except Exception:
             # Never expose provider responses, credentials or source text in logs/UI.
             self.events.put(('message', generation,
@@ -291,6 +297,8 @@ class TranslationApp:
             self.root.destroy()
             return
         self.icon.run_detached()
+        if not chatgpt_auth.connected(Settings.load().chatgpt_account):
+            self.events.put(("settings",))
         self.root.after(30, self.poll)
         self.root.mainloop()
 

@@ -21,15 +21,15 @@ try:
             return value
         labels=texts(window)
         assert 'Continue with ChatGPT' in labels
-        assert 'JTranslate専用のChatGPT接続' in labels
-        assert any('JHenkan' in label for label in labels)
+        assert 'Thinking level（推論の強さ）' in labels
+        assert not any('JHenkan' in label for label in labels)
         signin.assert_not_called()
         assert credential.exists()==existed
         window.destroy()
 finally:
     app.root.destroy()
 
-result={'dedicated_signin_button':True,'shared_connection_choice':True,
+result={'dedicated_signin_button':True,'no_shared_connection_dependency':True,
         'no_browser_or_auth_grant_created':True,'credential_store_unchanged':True}
 Path('SETTINGS-TEST-RESULTS.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
 print(json.dumps(result))

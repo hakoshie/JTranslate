@@ -9,10 +9,7 @@ from openai import OpenAI
 logger = logging.getLogger("jhenkan")
 
 
-def supported_efforts(model: str) -> tuple[str, ...]:
-    if model.startswith(("gpt-6-sol", "gpt-6.1-sol", "gpt-6-astra")):
-        return ("low",)
-    return ("none", "low")
+from .reasoning import supported_efforts, validate_effort
 
 
 INSTRUCTIONS = """あなたは日本語IMEの変換エンジンです。
@@ -50,9 +47,12 @@ class JapaneseConverter:
         provider: str = "openai",
         diagnostic_text_logging: bool = False,
         reasoning_effort: str = "none",
+        supported_reasoning_efforts=None,
     ) -> None:
         if provider not in {"openai", "gemini", "chatgpt"}:
             raise ValueError(f"未対応のプロバイダーです: {provider}")
+        if provider != "gemini":
+            validate_effort(model, reasoning_effort, supported_reasoning_efforts)
         options = {"api_key": api_key, "timeout": timeout, "max_retries": 1}
         if provider == "gemini":
             options["base_url"] = "https://generativelanguage.googleapis.com/v1beta/openai/"
@@ -60,8 +60,7 @@ class JapaneseConverter:
         self.model = model
         self.provider = provider
         self.diagnostic_text_logging = diagnostic_text_logging
-        efforts = supported_efforts(model)
-        self.reasoning_effort = reasoning_effort if reasoning_effort in efforts else efforts[0]
+        self.reasoning_effort = reasoning_effort
 
     def convert(self, source: str, previous: str | None = None) -> str:
         if not source.strip():

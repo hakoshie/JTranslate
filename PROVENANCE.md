@@ -12,13 +12,13 @@ translation prompts, conservative line-break cleanup, selection-only UI,
 resizable floating popup, clipboard copy and translation tests.
 
 The original JHenkan repository, installation and credentials are not migrated
-or deleted. Optional compatibility mode reads JHenkan's existing connection.
+or deleted. JTranslate uses only its own per-user authentication store.
 Dedicated JTranslate sign-in uses a new app registration named JTranslate.
 No existing issued OAuth client ID is repurposed for that registration.
 
 Official authentication reference checked 2026-10-17:
 https://developers.openai.com/siwc/token-sharing-open-source/sign-in
 
-This repository was initialized locally without a remote. No GitHub repository,
-push or pull request has been created. Real credentials, personal settings,
-logs and machine-specific shortcuts are excluded from version control.
+The GitHub origin is configured only with explicit user authorization. Real
+credentials, personal settings, logs and machine-specific shortcuts are excluded
+from version control. JHenkan is not pushed as part of JTranslate publishing.

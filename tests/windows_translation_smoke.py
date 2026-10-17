@@ -201,7 +201,8 @@ with ClipboardSnapshot():
 
     with patch('jtranslate_app.translate_app.JapaneseTranslator', FakeTranslator), \
          patch('jtranslate_app.translate_app.get_api_key', return_value='test-only'), \
-         patch('jtranslate_app.translate_app.capture_selected', debug_capture):
+         patch('jtranslate_app.translate_app.capture_selected', debug_capture), \
+         patch('jtranslate_app.chatgpt_auth.connected', return_value=True):
         app.root.after(300, step)
         app.run()
     check('tray exit releases hotkey', app.closed)

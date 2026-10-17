@@ -73,7 +73,7 @@ def test_chatgpt_streams_with_supported_fields_and_applies_sol_low():
     with patch("jtranslate_app.converter.OpenAI") as openai:
         request = openai.return_value.responses.create
         request.return_value.__enter__.return_value = iter(events)
-        converter = JapaneseConverter("oauth-secret", "gpt-6.1-sol", provider="chatgpt")
+        converter = JapaneseConverter("oauth-secret", "gpt-6.1-sol", provider="chatgpt", reasoning_effort="low", supported_reasoning_efforts=["low"])
         assert converter.convert("  nihongo\n") == "  日本語\n"
         kwargs = request.call_args.kwargs
         assert kwargs["stream"] is True and kwargs["store"] is False

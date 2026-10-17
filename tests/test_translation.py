@@ -9,18 +9,18 @@ import threading
 
 
 def test_translation_prompt_and_unicode():
-    converter = translation.JapaneseTranslator('test', 'model')
+    converter = translation.JapaneseTranslator('test', 'gpt-6-luna')
     converter.client = Mock()
     converter.client.responses.create.return_value = SimpleNamespace(output_text='こんにちは世界🌏')
     assert converter.convert('Hello world 🌏') == 'こんにちは世界🌏'
     request = converter.client.responses.create.call_args.kwargs
     assert request['instructions'] == translation.TRANSLATION_INSTRUCTIONS
     assert request['input'] == 'Hello world 🌏'
-    assert JapaneseConverter('test', 'model').instructions == INSTRUCTIONS
+    assert JapaneseConverter('test', 'gpt-6-luna').instructions == INSTRUCTIONS
 
 
 def test_empty_never_contacts_provider():
-    converter = translation.JapaneseTranslator('test', 'model')
+    converter = translation.JapaneseTranslator('test', 'gpt-6-luna')
     converter.client = Mock()
     assert converter.convert('  ') == '  '
     converter.client.responses.create.assert_not_called()
@@ -91,7 +91,7 @@ def test_long_text_translates_every_character_in_order(monkeypatch):
         return '訳' + text
     monkeypatch.setattr(JapaneseConverter, 'convert', convert)
     source = ('A long paragraph. 日本語🌏\n' * 1000)
-    result = translation.JapaneseTranslator('test', 'model').convert(source)
+    result = translation.JapaneseTranslator('test', 'gpt-6-luna').convert(source)
     assert ''.join(calls) == source
     assert len(calls) > 1
     assert result.count('訳') == len(calls)
@@ -103,7 +103,7 @@ def test_long_text_stops_after_cancellation(monkeypatch):
         calls.append(text)
         return '訳'
     monkeypatch.setattr(JapaneseConverter, 'convert', convert)
-    converter = translation.JapaneseTranslator('test', 'model')
+    converter = translation.JapaneseTranslator('test', 'gpt-6-luna')
     import pytest
     with pytest.raises(InterruptedError):
         converter.convert('hello ' * 2000, cancelled=lambda: len(calls) == 1)
@@ -152,7 +152,7 @@ def test_focus_change_does_not_capture_unrelated_selection(monkeypatch):
 
 def test_incomplete_translation_is_not_shown_as_complete():
     import pytest
-    converter = translation.JapaneseTranslator('test', 'model')
+    converter = translation.JapaneseTranslator('test', 'gpt-6-luna')
     converter.client = Mock()
     converter.client.responses.create.return_value = SimpleNamespace(output_text='partial', status='incomplete')
     with pytest.raises(RuntimeError):
