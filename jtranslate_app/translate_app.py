@@ -5,6 +5,7 @@ import queue
 from pathlib import Path
 import threading
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import ttk, messagebox
 
 import pyperclip
@@ -17,6 +18,7 @@ from .selection import foreground_window
 from .tray import TrayIcon, set_app_identity
 from .translation import JapaneseTranslator, capture_selected
 from .popup_geometry import constrain_rect, resize_rect
+from .display_wrap import wrap_display_text
 from .reasoning import ReasoningConfigurationError, validate_effort
 from . import chatgpt_auth
 from .capture_errors import CaptureFailure
@@ -58,7 +60,7 @@ class TranslationApp:
         self.title.bind('<ButtonPress-1>', self.drag_start)
         self.title.bind('<B1-Motion>', self.drag_move)
         ttk.Button(header, text='×', width=3, command=self.hide).pack(side='right')
-        self.text = tk.Text(content, wrap='word', font=('Yu Gothic UI', 12),
+        self.text = tk.Text(content, wrap='none', font=('Yu Gothic UI', 12),
                             relief='flat', padx=12, pady=8, state='disabled')
         self.scroll = ttk.Scrollbar(content, command=self.text.yview)
         self.text.configure(yscrollcommand=self.scroll.set)
@@ -66,6 +68,8 @@ class TranslationApp:
         self.base_title = self.title.cget('text')
         self._layout_active = False
         self._layout_dirty = False
+        self._display_source = ''
+        self._wrap_key = None
         self._layout_revision = 0
         self._layout_request = 0
         self._layout_timer = None
@@ -212,6 +216,23 @@ class TranslationApp:
         return (self.root.winfo_width(),self.root.winfo_height(),
                 self.work_area(),self.root.winfo_fpixels('1i'))
 
+    def reflow_text(self):
+        font = tkfont.Font(font=self.text.cget('font'))
+        width = max(1,self.text.winfo_width()-2*sum(int(self.text.cget(option))
+                    for option in ('padx','borderwidth','highlightthickness')))
+        key = (self._layout_revision,width,tuple(sorted(font.actual().items())),
+               font.metrics('linespace'),font.measure('M'))
+        if key == self._wrap_key:
+            return
+        rendered = wrap_display_text(self._display_source,font.measure,width)
+        position = self.text.yview()[0]
+        self.text.configure(state='normal')
+        self.text.delete('1.0','end')
+        self.text.insert('1.0',rendered)
+        self.text.configure(state='disabled')
+        self.text.yview_moveto(position)
+        self._wrap_key = key
+
     def fit_height(self, bounds=None):
         # Tk measures actual wrapped display lines, including Unicode and DPI.
         if self._layout_active:
@@ -230,6 +251,7 @@ class TranslationApp:
             if self.closed or not self.root.winfo_viewable():
                 return
             def required_height():
+                self.reflow_text()
                 pixels = self.text.count('1.0','end','update','ypixels')
                 pixels = (pixels[0] if isinstance(pixels,tuple) else pixels) or 0
                 chrome = self.root.winfo_height()-self.text.winfo_height()
@@ -264,6 +286,7 @@ class TranslationApp:
 
     def display(self, text, kind='result'):
         self._layout_revision += 1
+        self._display_source = text
         self.title.configure(text=('翻訳中' if kind=='loading' else
             ('お知らせ' if kind=='message' else self.base_title)+'（Escで閉じる）'))
         self.text.configure(state='normal')

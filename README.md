@@ -57,6 +57,8 @@ Lunaは`none / low / medium / high / xhigh / max`を選択できます。
 - 端・四隅を両矢印カーソルでリサイズ。最小320×100、モニター作業領域内に制限。
 - 手動で変えた幅をプロセス中に維持。高さは本文の実際の折り返し量に合わせて伸縮します。
   モニターの作業領域いっぱいまで広げても収まらない長文だけ縦スクロールします。幅を変えた後も高さを測り直します。
+- 日本語の文字間と英単語の区切りを使って折り返します。幅に収まる英単語は途中で分断せず、
+  幅より長い単語・URLだけ表示上で分割します。段落・箇条書き・コードの明示的な改行は保持します。
 - 訳文を右クリック1回で全文コピー。スクロールで見えていない部分も含みます。
 - 外クリック・Esc・×で閉じます。リサイズ・ドラッグ・右クリックコピー中は閉じません。
 - トレイから設定・一時停止・終了。
@@ -71,7 +73,7 @@ Lunaは`none / low / medium / high / xhigh / max`を選択できます。
 ## 改行とプライバシー
 
 明確な文中の行末折返しだけを保守的に整理し、空行・文末・見出し・箇条書き・
-インデント・コードを維持します。UIの折返しでコピー本文に改行文字は追加しません。
+インデント・コードを維持します。表示上の折返しはコピー用の結果本文へ書き込みません。右クリックは元の結果全文をコピーします。
 
 選択取得はWindows標準選択API／UI Automationを優先します。ブラウザ本文で取得できない場合は、
 Chrome／Edge／Firefoxなどのブラウザプロセスに限定してCtrl+Cを送り、新しくコピーされた選択文を取得します。
@@ -118,6 +120,7 @@ $env:PYTHONPATH = (Get-Location).Path
 .\.venv\Scripts\python.exe tests\windows_resize_smoke.py
 .\.venv\Scripts\python.exe tests\windows_error_layout_smoke.py
 .\.venv\Scripts\python.exe tests\windows_autoheight_smoke.py
+.\.venv\Scripts\python.exe tests\windows_mixed_wrap_smoke.py
 .\.venv\Scripts\python.exe tests\windows_owner_message_smoke.py
 .\.venv\Scripts\python.exe tests\windows_right_click_smoke.py
 .\.venv\Scripts\python.exe tests\windows_translation_smoke.py

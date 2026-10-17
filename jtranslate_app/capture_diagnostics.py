@@ -3,7 +3,7 @@ import hashlib,json,os,re,threading,time,types
 from .config import data_dir
 from .capture_errors import MESSAGES
 
-REVISION=5
+REVISION=6
 _lock=threading.Lock()
 _EVENTS={'startup','request','wait_release','native','uia','browser_gate','snapshot','copy_sent',
          'copy_wait','capture_done','capture_failed','provider_failed','restore_wait','restore_done'}
@@ -36,6 +36,7 @@ def loaded_signature():
     from .translation import capture_selected,read_selection,_wait_for_hotkey_release
     from .browser_clipboard import ClipboardCapture,copy_browser_selection
     from .translate_app import TranslationApp
+    from .display_wrap import wrap_display_text,units,clusters
     def freeze(value):
         if isinstance(value,types.CodeType):
             return {'bytecode':value.co_code.hex(),'names':value.co_names,
@@ -47,7 +48,8 @@ def loaded_signature():
         return type(value).__name__
     data=[freeze(fn.__code__) for fn in
           (capture_selected,read_selection,_wait_for_hotkey_release,copy_browser_selection,
-           ClipboardCapture.fresh_text,ClipboardCapture.pump_messages,ClipboardCapture.__exit__,TranslationApp.display,TranslationApp.fit_height)]
+           ClipboardCapture.fresh_text,ClipboardCapture.pump_messages,ClipboardCapture.__exit__,TranslationApp.display,TranslationApp.fit_height,
+           TranslationApp.reflow_text,wrap_display_text,units,clusters)]
     return hashlib.sha256(json.dumps(data,sort_keys=True,separators=(',',':')).encode()).hexdigest()[:12]
 
 def startup():
