@@ -31,7 +31,9 @@ def prepare(monkeypatch):
 
 def test_unchanged_clipboard_is_never_selected(monkeypatch,saved_clipboard):
     prepare(monkeypatch);pyperclip.copy('Unrelated synthetic clipboard')
-    assert module.copy_browser_selection(window=42,foreground=lambda:42,send=lambda:None,timeout=.04) is None
+    with pytest.raises(module.CaptureFailure) as failure:
+        module.copy_browser_selection(window=42,foreground=lambda:42,send=lambda:None,timeout=.04)
+    assert failure.value.code=='copy_timeout'
     assert pyperclip.paste()=='Unrelated synthetic clipboard'
 
 def test_fresh_copy_can_equal_original_text(monkeypatch,saved_clipboard,browser_writer):
@@ -65,7 +67,7 @@ def test_copy_restores_plain_text_and_html(monkeypatch,saved_clipboard,browser_w
 def test_foreign_copy_wins_without_translating_it(monkeypatch,saved_clipboard):
     monkeypatch.setattr(module,'browser_process',lambda window:os.getpid()+100000)
     pyperclip.copy('Original synthetic text')
-    with pytest.raises(OSError,match='another application'):
+    with pytest.raises(module.CaptureFailure,match='clipboard_changed'):
         module.copy_browser_selection(window=42,foreground=lambda:42,
             send=lambda:pyperclip.copy('Concurrent synthetic copy'),timeout=.1)
     assert pyperclip.paste()=='Concurrent synthetic copy'

@@ -20,6 +20,8 @@ from .translation import JapaneseTranslator, capture_selected
 from .popup_geometry import constrain_rect, resize_rect
 from .reasoning import ReasoningConfigurationError, validate_effort
 from . import chatgpt_auth
+from .capture_errors import CaptureFailure
+from . import capture_diagnostics as diagnostics
 
 
 ICON_PATH = Path(__file__).resolve().parents[1] / 'assets' / 'jtranslate-d-yaku.ico'
@@ -47,6 +49,7 @@ class TranslationApp:
         self.escape_down = False
         self.resizing = None
         self.user_size = None
+        self.popup_minimum = (320,100)
         content = ttk.Frame(self.root)
         content.pack(fill='both',expand=True,padx=5,pady=5)
         header = ttk.Frame(content, padding=8)
@@ -134,7 +137,8 @@ class TranslationApp:
     def resize_move(self,event):
         if self.resizing:
             edge,x,y,rect = self.resizing
-            left,top,w,h = resize_rect(rect,edge,event.x_root-x,event.y_root-y,self.work_area())
+            left,top,w,h = resize_rect(rect,edge,event.x_root-x,event.y_root-y,self.work_area(),
+                getattr(self,'popup_minimum',(320,100)))
             self.user_size = (w,h)
             self.root.geometry(f'{w}x{h}{left:+d}{top:+d}')
         return 'break'
@@ -171,11 +175,12 @@ class TranslationApp:
                 self.hide()
         self.mouse_down, self.escape_down = down, escape
 
-    def display(self, text):
+    def display(self, text, kind='result'):
         self.text.configure(state='normal')
         self.text.delete('1.0', 'end')
         self.text.insert('1.0', text)
         self.text.configure(state='disabled')
+        self.text.yview_moveto(0)
         font = tkfont.Font(font=self.text.cget('font'))
         width = self.user_size[0] if self.user_size else 540
         available = max(1,width-40)
@@ -184,13 +189,38 @@ class TranslationApp:
         if self.user_size:
             width,height = self.user_size
         bounds = self.work_area()
-        x,y,width,height = constrain_rect((self.root.winfo_x(),self.root.winfo_y(),width,height),bounds)
+        if kind == 'message':
+            scale=max(.75,self.root.winfo_fpixels('1i')/96)
+            self.popup_minimum=(min(round(440*scale),bounds[2]-bounds[0]),
+                                min(round(140*scale),bounds[3]-bounds[1]))
+            width=min(bounds[2]-bounds[0],max(width,round(540*scale)))
+            height=self.popup_minimum[1]
+        else:
+            self.popup_minimum=(320,100)
+        self.root.minsize(*self.popup_minimum)
+        x,y,width,height = constrain_rect((self.root.winfo_x(),self.root.winfo_y(),width,height),bounds,
+                                          self.popup_minimum)
         if not self.root.winfo_viewable():
             x,y,width,height = constrain_rect((self.root.winfo_pointerx()+16,
                 self.root.winfo_pointery()+16,width,height),bounds)
         self.root.geometry(f'{width}x{height}{x:+d}{y:+d}')
         self.root.deiconify()
         self.root.lift()
+        if kind == 'message':
+            # Measure Tk's actual wrapped display lines at the current font/DPI.
+            self.root.update_idletasks()
+            content_pixels=self.text.count('1.0','end-1c','ypixels')
+            content_pixels=(content_pixels[0] if content_pixels else 0)+font.metrics('linespace')
+            chrome=self.root.winfo_height()-self.text.winfo_height()
+            padding=2*sum(int(self.text.cget(option)) for option in ('pady','borderwidth','highlightthickness'))
+            height=min(bounds[3]-bounds[1],max(self.popup_minimum[1],chrome+padding+content_pixels+4))
+            x,y,width,height=constrain_rect((x,y,width,height),bounds,self.popup_minimum)
+            self.root.geometry(f'{width}x{height}{x:+d}{y:+d}')
+            self.root.update_idletasks()
+            self.text.yview_moveto(0)
+
+    def display_message(self,text):
+        self.display(text,kind='message')
 
     def copy_on_right_click(self, event):
         # A single right click copies the complete result, including off-screen text.
@@ -204,6 +234,7 @@ class TranslationApp:
     def request(self):
         if self.closed or self.paused or not self.busy.acquire(False):
             return
+        diagnostics.record('request',**diagnostics.hotkey_state())
         self.events.put(('begin', foreground_window()))
 
     def worker(self, generation, source_window=None):
@@ -211,7 +242,12 @@ class TranslationApp:
             try:
                 selected = (capture_selected(expected_window=source_window)
                             if source_window is not None else capture_selected())
-            except Exception:
+            except CaptureFailure as exc:
+                diagnostics.record('capture_failed',code=exc.code)
+                self.events.put(('message',generation,exc.user_message))
+                return
+            except Exception as exc:
+                diagnostics.record('capture_failed',error_type=type(exc).__name__)
                 self.events.put(('message', generation,
                     'この入力欄から選択文を取得できませんでした。対応する本文・入力欄で文章を選択してお試しください。'))
                 return
@@ -233,7 +269,8 @@ class TranslationApp:
             self.events.put(('result', generation, result))
         except ReasoningConfigurationError as exc:
             self.events.put(('message',generation,str(exc)))
-        except Exception:
+        except Exception as exc:
+            diagnostics.record('provider_failed',error_type=type(exc).__name__)
             # Never expose provider responses, credentials or source text in logs/UI.
             self.events.put(('message', generation,
                 '翻訳できませんでした。トレイの「設定・ChatGPTログイン」と通信状態を確認し、もう一度お試しください。'))
@@ -252,7 +289,8 @@ class TranslationApp:
                 self.paused = not self.paused
                 self.icon.update_menu()
             elif kind == 'show':
-                self.display(self.result or '文章を選択してから Ctrl+M を押してください。')
+                (self.display(self.result) if self.result else
+                 self.display_message('文章を選択してから Ctrl+M を押してください。'))
             elif kind == 'settings':
                 from .settings_ui import open_settings
                 self.hide()
@@ -269,9 +307,9 @@ class TranslationApp:
                     self.result = event[2]
                     self.display(self.result)
                 elif kind == 'loading':
-                    self.display('日本語に翻訳中…（Escで表示を閉じる）')
+                    self.display_message('日本語に翻訳中…（Escで表示を閉じる）')
                 elif kind == 'message':
-                    self.display(event[2])
+                    self.display_message(event[2])
         self.root.after(30, self.poll)
 
     def quit(self):
@@ -281,6 +319,7 @@ class TranslationApp:
         self.root.destroy()
 
     def run(self):
+        diagnostics.startup()
         try:
             self.hotkey.start()
         except OSError:

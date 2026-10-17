@@ -21,3 +21,12 @@ def test_pdf_soft_lines_join_but_real_structures_survive():
 def test_japanese_wrap_and_complete_sentences():
     assert normalize_prose_breaks('これは文章の途中\nに入った改行です。\n次の文です。') == 'これは文章の途中に入った改行です。\n次の文です。'
     assert normalize_prose_breaks('Title\n  indented code\n    next line\n\n1. item\n2. item') == 'Title\n  indented code\n    next line\n\n1. item\n2. item'
+
+
+def test_error_resize_enforces_readable_minimum():
+    assert resize_rect((100,100,540,300),'nw',1000,1000,(0,0,1000,800),minimum=(440,160))==(200,240,440,160)
+
+
+def test_error_minimum_never_exceeds_small_work_area():
+    from jtranslate_app.popup_geometry import constrain_rect
+    assert constrain_rect((0,0,540,300),(0,0,250,80),minimum=(440,160))==(0,0,250,80)

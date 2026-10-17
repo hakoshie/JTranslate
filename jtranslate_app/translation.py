@@ -5,12 +5,15 @@ import ctypes
 import subprocess
 import json
 import re
+import time
 from pathlib import Path
 from ctypes import wintypes
 
 from .browser_clipboard import copy_browser_selection
 from .converter import JapaneseConverter
-from .selection import foreground_window, _wait_for_hotkey_release
+from .selection import foreground_window
+from .capture_errors import CaptureFailure
+from . import capture_diagnostics as diagnostics
 
 
 TRANSLATION_INSTRUCTIONS = """Translate the user's text into natural Japanese, regardless of its source language.
@@ -80,8 +83,11 @@ def read_selection():
     """Prefer explicit native/UIA selection; use a fresh browser copy when necessary."""
     native = read_native_edit()
     if native is not None:
+        diagnostics.record('native',status='text' if native else 'empty')
         return native
+    diagnostics.record('native',status='not_native')
     data = read_uia_selection()
+    diagnostics.record('uia',status=data['status'],can_copy=bool(data.get('copy_safe',False)))
     if data['status'] == 'blocked':
         return ''
     if data.get('text', '').strip():
@@ -95,13 +101,24 @@ def read_selection():
 
 def read_uia_selection():
     script = Path(__file__).with_name('read-selection.ps1')
-    result = subprocess.run(
-        ['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', str(script)],
-        capture_output=True, encoding='utf-8', timeout=10,
-        creationflags=subprocess.CREATE_NO_WINDOW)
+    started=time.monotonic()
+    try:
+        result = subprocess.run(
+            ['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', str(script)],
+            capture_output=True, encoding='utf-8', timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW)
+    except subprocess.TimeoutExpired:
+        raise CaptureFailure('uia_timeout') from None
+    diagnostics.record('uia',elapsed_ms=round((time.monotonic()-started)*1000))
     if result.returncode:
-        raise RuntimeError('選択範囲を取得できませんでした。')
-    return json.loads(result.stdout)
+        raise CaptureFailure('uia_failed')
+    try:
+        data=json.loads(result.stdout)
+        if data['status'] not in ('selected','blocked','unsupported') or not isinstance(data.get('text'),str):
+            raise ValueError('Invalid selection response')
+        return data
+    except (ValueError,KeyError,TypeError):
+        raise CaptureFailure('uia_failed') from None
 
 
 def read_native_edit():
@@ -127,7 +144,7 @@ def read_native_edit():
     def send(message, wparam, lparam):
         result = ctypes.c_size_t()
         if not user.SendMessageTimeoutW(info.focus, message, wparam, lparam, 2, 1000, ctypes.byref(result)):
-            raise RuntimeError('Input field is not responding')
+            raise CaptureFailure('native_timeout')
         return result.value
     start, end = wintypes.DWORD(), wintypes.DWORD()
     send(0xb0, ctypes.addressof(start), ctypes.addressof(end))
@@ -135,18 +152,35 @@ def read_native_edit():
         return ''
     length = send(0xe, 0, 0)
     if length > 1000000:
-        raise RuntimeError('Input field is too large')
+        raise CaptureFailure('selection_too_large')
     text = ctypes.create_unicode_buffer(length+1)
     send(0xd, length+1, ctypes.addressof(text))
     return text.value.encode('utf-16-le')[start.value*2:end.value*2].decode('utf-16-le')
+
+
+def _wait_for_hotkey_release(timeout=2.0):
+    deadline=time.monotonic()+timeout
+    state=diagnostics.hotkey_state()
+    diagnostics.record('wait_release',**state)
+    while state['ctrl_down'] or state['m_down']:
+        if time.monotonic()>=deadline:
+            diagnostics.record('capture_failed',code='hotkey_not_released',**state)
+            raise CaptureFailure('hotkey_not_released')
+        time.sleep(.01)
+        state=diagnostics.hotkey_state()
+    diagnostics.record('wait_release',**state)
 
 
 def capture_selected(read=read_selection, expected_window=None):
     window = expected_window if expected_window is not None else foreground_window()
     _wait_for_hotkey_release()
     if window != foreground_window():
+        diagnostics.record('capture_done',status='empty',foreground_matches=False)
         return None
     selected = read()
     if window != foreground_window():
+        diagnostics.record('capture_done',status='empty',foreground_matches=False)
         return None
+    diagnostics.record('capture_done',status='text' if selected and selected.strip() else 'empty',
+                       foreground_matches=True)
     return selected if selected and selected.strip() else None

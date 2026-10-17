@@ -80,6 +80,16 @@ Chrome／Edge／Firefoxなどのブラウザプロセスに限定してCtrl+Cを
 一部PDF描画領域や管理者アプリなど、選択取得できないアプリがあります。
 本文や認証情報はログへ記録しません。右クリックでコピーした結果は、そのままクリップボードに残します。
 
+## エラー表示と診断
+
+エラー・案内文は翻訳用の手動サイズをそのまま使わず、実際の折返しと文字の高さを測って広げます。
+文字が画面の高さに収まらない場合は縦スクロールで全文を読めます。翻訳用の手動サイズは保持します。
+
+取得失敗はキー解放待ち、Windows選択API、クリップボード保持、コピー完了、コピー元確認、復元失敗を区別します。
+`%LOCALAPPDATA%\JTranslate\selection-diagnostics.log`には、失敗分類・処理段階・キー状態・稼働コードの指紋だけを記録します。
+本文、クリップボード内容、URL、ウィンドウ名、認証情報は記録しません。
+ログは約64KiBを超えると直近100行へ縮小します。診断ログはリポジトリに含めません。
+
 ## アイコン
 
 承認済みの水色の「訳」を使用します。MSゴシックの輪郭を高解像度で描き、
@@ -98,6 +108,7 @@ Windows通知にも専用の32pxアイコンを明示し、通知元ウィンド
 .\.venv\Scripts\python.exe -m pytest -q
 $env:PYTHONPATH = (Get-Location).Path
 .\.venv\Scripts\python.exe tests\windows_resize_smoke.py
+.\.venv\Scripts\python.exe tests\windows_error_layout_smoke.py
 .\.venv\Scripts\python.exe tests\windows_right_click_smoke.py
 .\.venv\Scripts\python.exe tests\windows_translation_smoke.py
 .\.venv\Scripts\python.exe -m pytest -q tests\windows_clipboard_smoke.py

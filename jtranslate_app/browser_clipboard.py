@@ -7,6 +7,8 @@ import threading
 import time
 import uuid
 import keyboard
+from .capture_errors import CaptureFailure
+from . import capture_diagnostics as diagnostics
 
 _capture_lock=threading.Lock()
 _BROWSERS={'chrome.exe','msedge.exe','firefox.exe','brave.exe','vivaldi.exe','opera.exe'}
@@ -67,24 +69,24 @@ class ClipboardCapture:
     def opened(self):
         deadline=time.monotonic()+1
         while not self.user.OpenClipboard(ctypes.c_void_p(self.window)):
-            if time.monotonic()>=deadline:raise OSError('Clipboard is busy')
+            if time.monotonic()>=deadline:raise CaptureFailure('clipboard_busy')
             time.sleep(.01)
         try:yield
         finally:self.user.CloseClipboard()
 
     def put(self,fmt,data):
         handle=self.kernel.GlobalAlloc(0x42,len(data))
-        if not handle:raise OSError('Cannot allocate clipboard data')
+        if not handle:raise CaptureFailure('clipboard_access')
         pointer=self.kernel.GlobalLock(handle)
         if not pointer:
-            self.kernel.GlobalFree(handle);raise OSError('Cannot lock clipboard data')
+            self.kernel.GlobalFree(handle);raise CaptureFailure('clipboard_access')
         ctypes.memmove(pointer,data,len(data));self.kernel.GlobalUnlock(handle)
         if not self.user.SetClipboardData(fmt,handle):
-            self.kernel.GlobalFree(handle);raise OSError('Cannot set clipboard data')
+            self.kernel.GlobalFree(handle);raise CaptureFailure('clipboard_access')
 
     def __enter__(self):
         self.window=self.user.CreateWindowExW(0,'STATIC','JTranslate selection capture',0,0,0,0,0,None,None,None,None)
-        if not self.window:raise OSError('Cannot create clipboard owner')
+        if not self.window:raise CaptureFailure('clipboard_access')
         try:
             with self.opened():
                 fmt=0
@@ -92,15 +94,16 @@ class ClipboardCapture:
                     ctypes.set_last_error(0)
                     fmt=self.user.EnumClipboardFormats(fmt)
                     if not fmt:
-                        if ctypes.get_last_error():raise OSError("Cannot enumerate clipboard formats")
+                        if ctypes.get_last_error():raise CaptureFailure('clipboard_preserve')
                         break
                     if fmt in (3,14) or 0x80<=fmt<=0x8f or 0x200<=fmt<=0x2ff:
-                        raise OSError('Clipboard format cannot be safely preserved')
+                        raise CaptureFailure('clipboard_preserve')
                     original=self.user.GetClipboardData(fmt)
                     duplicate=self.ole.OleDuplicateData(original,fmt,0) if original else None
-                    if not duplicate:raise OSError('Clipboard format cannot be safely preserved')
+                    if not duplicate:raise CaptureFailure('clipboard_preserve')
                     self.handles.append((fmt,duplicate))
-                if not self.user.EmptyClipboard():raise OSError('Cannot prepare clipboard capture')
+                diagnostics.record('snapshot',formats=len(self.handles))
+                if not self.user.EmptyClipboard():raise CaptureFailure('clipboard_access')
                 self.put(13,(self.marker+'\0').encode('utf-16-le'))
                 # Exclude the temporary sentinel from Windows clipboard history/cloud sync.
                 for flag in ('CanIncludeInClipboardHistory','CanUploadToCloudClipboard'):
@@ -121,17 +124,20 @@ class ClipboardCapture:
         with self.opened():
             owner=self.user.GetClipboardOwner();pid=wintypes.DWORD()
             if owner:self.user.GetWindowThreadProcessId(ctypes.c_void_p(owner),ctypes.byref(pid))
+            diagnostics.record('copy_wait',owner=('our_marker' if owner==self.window else
+                'missing' if not owner else 'same_browser' if pid.value==browser_pid else 'other'))
             if owner==self.window:
                 self.sequence=self.user.GetClipboardSequenceNumber()
                 return None
-            if pid.value!=browser_pid:raise OSError('Clipboard changed in another application')
+            if not owner:raise CaptureFailure('copy_owner_missing')
+            if pid.value!=browser_pid:raise CaptureFailure('clipboard_changed')
             self.sequence=self.user.GetClipboardSequenceNumber()
             handle=self.user.GetClipboardData(13)
             if not handle:return None
             size=self.kernel.GlobalSize(handle)
-            if size>2_000_002:raise OSError('Selection is too large')
+            if size>2_000_002:raise CaptureFailure('selection_too_large')
             pointer=self.kernel.GlobalLock(handle)
-            if not pointer:raise OSError('Cannot read new clipboard data')
+            if not pointer:raise CaptureFailure('clipboard_access')
             try:text=_decode_unicode(ctypes.string_at(pointer,size))
             finally:self.kernel.GlobalUnlock(handle)
             self.sequence=self.user.GetClipboardSequenceNumber()
@@ -147,10 +153,10 @@ class ClipboardCapture:
         if self.window:self.user.DestroyWindow(ctypes.c_void_p(self.window));self.window=None
 
     def restore_locked(self):
-        if not self.user.EmptyClipboard():raise OSError('Cannot restore clipboard')
+        if not self.user.EmptyClipboard():raise CaptureFailure('clipboard_restore')
         while self.handles:
             fmt,handle=self.handles[0]
-            if not self.user.SetClipboardData(fmt,handle):raise OSError('Cannot restore clipboard format')
+            if not self.user.SetClipboardData(fmt,handle):raise CaptureFailure('clipboard_restore')
             self.handles.pop(0)
         self.restored=True
 
@@ -170,11 +176,13 @@ def copy_browser_selection(window=None,foreground=None,send=None,timeout=1.5):
         foreground=foreground_window
     if window is None:window=foreground()
     pid=browser_process(window)
+    diagnostics.record('browser_gate',supported=bool(pid),foreground_matches=foreground()==window)
     if not pid or foreground()!=window:return None
     if not _capture_lock.acquire(False):return None
     try:
         with ClipboardCapture() as capture:
             if foreground()!=window:return None
+            diagnostics.record('copy_sent')
             (send or (lambda:keyboard.send('ctrl+c')))()
             deadline=time.monotonic()+timeout
             while time.monotonic()<deadline:
@@ -182,5 +190,6 @@ def copy_browser_selection(window=None,foreground=None,send=None,timeout=1.5):
                 text=capture.fresh_text(pid)
                 if text is not None:return text
                 time.sleep(.015)
-            return None
+            diagnostics.record('capture_failed',code='copy_timeout')
+            raise CaptureFailure('copy_timeout')
     finally:_capture_lock.release()
