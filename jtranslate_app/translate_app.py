@@ -556,8 +556,6 @@ class TranslationApp:
             self.root.destroy()
             return
         self.icon.run_detached()
-        if not chatgpt_auth.connected(Settings.load().chatgpt_account):
-            self.events.put(("settings",))
         self.root.after(30, self.poll)
         self.root.mainloop()
 

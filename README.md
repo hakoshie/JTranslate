@@ -21,7 +21,8 @@ cd JTranslate
 
 ## Sign in with ChatGPT
 
-未ログインで起動すると設定画面を表示します。**Continue with ChatGPT** を押し、
+起動時は設定画面や通知を自動表示せず、トレイに常駐します。ログインする場合はトレイの
+**設定・ChatGPTログイン → Continue with ChatGPT** を押し、
 自分のアカウントでブラウザーから本人確認と利用枠の許可を行ってください。
 自動で認証や新規登録を開始することはありません。
 
