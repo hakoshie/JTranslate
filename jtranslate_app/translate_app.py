@@ -533,7 +533,7 @@ class TranslationApp:
                     self.result = event[2]
                     self.display(self.result)
                 elif kind == 'loading':
-                    self.display('日本語に翻訳中…\nEsc：結果表示を取り消す（進行中の通信は完了まで続きます）',kind='loading')
+                    self.display('翻訳中…（Escで閉じる）',kind='loading')
                 elif kind == 'message':
                     self.display_message(event[2])
         self.root.after(30, self.poll)
