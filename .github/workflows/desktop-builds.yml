@@ -27,7 +27,8 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: python -m pip install -r requirements-dev.txt "pyinstaller>=6.15,<7"
+      # Avoid an OpenSSL SONAME collision between Python and an sdist-built cryptography.
+      - run: python -m pip install --only-binary=cryptography -r requirements-dev.txt "pyinstaller>=6.15,<7"
       - name: Windows unit tests
         if: runner.os == 'Windows'
         run: python -m pytest -q
