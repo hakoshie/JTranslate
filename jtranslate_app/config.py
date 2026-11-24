@@ -1,10 +1,13 @@
 """Portable per-user settings, independent of credentials belonging to other apps."""
 import json
 import os
+import sys
 from dataclasses import asdict,dataclass,field
 from pathlib import Path
 
 def data_dir():
+    if sys.platform == 'darwin':
+        return Path.home() / 'Library' / 'Application Support' / 'JTranslate'
     return Path(os.getenv('LOCALAPPDATA',Path.home()/'AppData'/'Local'))/'JTranslate'
 
 @dataclass

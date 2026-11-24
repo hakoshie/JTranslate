@@ -1,6 +1,6 @@
 # JTranslate
 
-Windowsで文章を選択し、**Ctrl+M** で日本語訳する独立したタスクトレイ常駐アプリです。
+文章を選択し、**Ctrl+M** で日本語訳する独立したアプリです。Windowsではタスクトレイ、macOSではメニューバーに常駐できます。
 他のアプリの設定・ログイン・APIキーは使用しません。
 JHenkan由来のMITライセンスのコードを利用しています。[PROVENANCE.md](PROVENANCE.md)
 
@@ -136,3 +136,11 @@ $env:PYTHONPATH = (Get-Location).Path
 
 Windows実動テストは常駐を終了した検証環境で手動実行してください。合成文だけを使い、翻訳応答・認証はテスト用データに置き換えます。
 設定保存テストも一時フォルダーだけを使います。実ユーザーの認証は行いません。
+
+## GitHub Actions版（Windows / macOS）
+
+[Desktop builds](https://github.com/hakoshie/JTranslate/actions/workflows/desktop-builds.yml) の成功した実行にある Artifacts から、Windows x64・macOS Apple Silicon・macOS Intel 用のZIPを選べます。配布用の署名・Appleの公証は行っていません。Windows版は展開したフォルダーごと保持してください。
+
+- 通常起動（または `--resident`）：Windowsは通知領域、macOSはメニューバーの「訳」から設定・一時停止・終了。ログイン時の自動起動は登録しません。
+- `--no-resident`：トレイ／メニューバーとグローバルホットキーを使わず、ウィンドウに貼り付けた文章を翻訳します。Windowsは `JTranslate.exe --no-resident`、Macは通常版を終了してから `open -a /path/to/JTranslate.app --args --no-resident`。
+- Macの常駐版は **Control+M**。macOSの「プライバシーとセキュリティ → アクセシビリティ」でJTranslateを許可し、再起動してください。選択テキストをアクセシビリティAPIで公開しているアプリ・入力欄のみ対応し、コピー操作は自動実行しません。対応しない入力欄では手動モードが使えます。ChatGPTの認証情報はmacOSキーチェーンに、設定は `~/Library/Application Support/JTranslate/settings.json` に保存します。

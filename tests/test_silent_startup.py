@@ -24,3 +24,13 @@ def test_hotkey_registration_error_is_still_reported():
     error.assert_called_once()
     app.root.destroy.assert_called_once()
     app.icon.run_detached.assert_not_called()
+
+
+def test_manual_mode_starts_without_hotkey_or_tray():
+    app = make_app()
+    app.resident = False
+    with patch('jtranslate_app.translate_app.diagnostics.startup'):
+        app.run()
+    app.hotkey.start.assert_not_called()
+    app.icon.run_detached.assert_not_called()
+    app.root.mainloop.assert_called_once()

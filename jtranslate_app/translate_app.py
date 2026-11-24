@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import queue
+import sys
 from pathlib import Path
 import threading
 import tkinter as tk
@@ -9,13 +10,11 @@ import tkinter.font as tkfont
 from tkinter import ttk, messagebox
 
 import pyperclip
-import pystray
 from PIL import Image, ImageDraw
 
 from .config import Settings, get_api_key
 from .hotkey import GlobalHotkey
 from .selection import foreground_window
-from .tray import TrayIcon, set_app_identity
 from .translation import JapaneseTranslator, capture_selected
 from .popup_geometry import constrain_rect, resize_rect
 from .display_wrap import wrap_display_text
@@ -25,15 +24,25 @@ from .capture_errors import CaptureFailure
 from . import capture_diagnostics as diagnostics
 
 
+IS_MAC = sys.platform == 'darwin'
+if IS_MAC:
+    from .mac import MacTray, MacHotkey, foreground_pid, selected_text
+else:
+    import pystray
+    from .tray import TrayIcon, set_app_identity
+
+
 ICON_PATH = Path(__file__).resolve().parents[1] / 'assets' / 'jtranslate-d-yaku.ico'
 
 
 class TranslationApp:
-    def __init__(self):
+    def __init__(self, resident=True):
+        self.resident = resident
         self.root = tk.Tk()
         self.root.withdraw()
         self.root.overrideredirect(True)
-        self.root.attributes('-toolwindow', True)
+        if not IS_MAC:
+            self.root.attributes('-toolwindow', True)
         self.root.title('JTranslate — 日本語訳')
         self.root.attributes('-topmost', True)
         self.root.geometry('540x300')
@@ -99,8 +108,12 @@ class TranslationApp:
         self.text.bind('<ButtonRelease-1>',self.drag_end)
         self.root.bind('<Button-3>',self.copy_on_right_click)
         self.resize_handles = {}
+        if IS_MAC:
+            self.text.bind('<Button-2>', self.copy_on_right_click)
         for edge,cursor in {'n':'size_ns','s':'size_ns','e':'size_we','w':'size_we',
                             'nw':'size_nw_se','se':'size_nw_se','ne':'size_ne_sw','sw':'size_ne_sw'}.items():
+            if IS_MAC:
+                cursor = 'crosshair'
             handle = tk.Frame(self.root,bg='#e5e7eb',cursor=cursor)
             if len(edge)==1 and edge in 'ns':
                 handle.place(x=8,rely=1 if edge=='s' else 0,y=-5 if edge=='s' else 0,
@@ -115,6 +128,14 @@ class TranslationApp:
             handle.bind('<B1-Motion>',self.resize_move)
             handle.bind('<ButtonRelease-1>',self.resize_end)
             self.resize_handles[edge] = handle
+        self.root.update_idletasks()
+        if not resident:
+            self.open_input()
+            return
+        if IS_MAC:
+            self.icon = MacTray(lambda event: self.events.put((event,)), lambda: self.paused)
+            self.hotkey = MacHotkey(self.request)
+            return
         with Image.open(ICON_PATH.with_suffix('.png')) as source_icon:
             image = source_icon.copy()
         self.icon = TrayIcon('JTranslate', image, 'JTranslate — Ctrl+Mで日本語訳',
@@ -184,6 +205,8 @@ class TranslationApp:
         return self.work_area(anchor)
 
     def work_area(self, anchor=None):
+        if IS_MAC:
+            return 0, 24, self.root.winfo_screenwidth(), self.root.winfo_screenheight()
         from ctypes import wintypes
         class MonitorInfo(ctypes.Structure):
             _fields_ = [('size',wintypes.DWORD),('monitor',wintypes.RECT),
@@ -249,6 +272,8 @@ class TranslationApp:
         return left <= x < left+self.root.winfo_width() and top <= y < top+self.root.winfo_height()
 
     def dismiss_outside(self):
+        if IS_MAC:
+            return
         user = ctypes.windll.user32
         down = bool(user.GetAsyncKeyState(1) & 0x8000 or user.GetAsyncKeyState(2) & 0x8000)
         escape = bool(user.GetAsyncKeyState(0x1b) & 0x8000)
@@ -460,14 +485,22 @@ class TranslationApp:
     def request(self):
         if self.closed or self.paused or not self.busy.acquire(False):
             return
-        diagnostics.record('request',**diagnostics.hotkey_state())
-        self.events.put(('begin', foreground_window()))
+        if IS_MAC:
+            self.events.put(('begin', foreground_pid()))
+        else:
+            diagnostics.record('request',**diagnostics.hotkey_state())
+            self.events.put(('begin', foreground_window()))
 
-    def worker(self, generation, source_window=None):
+    def worker(self, generation, source_window=None, manual_text=None):
         try:
             try:
-                selected = (capture_selected(expected_window=source_window)
-                            if source_window is not None else capture_selected())
+                if manual_text is not None:
+                    selected = manual_text
+                elif IS_MAC:
+                    selected = selected_text(source_window)
+                else:
+                    selected = (capture_selected(expected_window=source_window)
+                                if source_window is not None else capture_selected())
             except CaptureFailure as exc:
                 diagnostics.record('capture_failed',code=exc.code)
                 self.events.put(('message',generation,exc.user_message))
@@ -503,6 +536,26 @@ class TranslationApp:
         finally:
             self.busy.release()
 
+    def open_input(self):
+        window = self.input_window = tk.Toplevel(self.root)
+        window.title('JTranslate')
+        window.geometry('540x260')
+        window.protocol('WM_DELETE_WINDOW', self.quit)
+        area = tk.Text(window, height=8, wrap='word')
+        area.pack(fill='both', expand=True, padx=8, pady=8)
+        buttons = ttk.Frame(window)
+        buttons.pack(fill='x', padx=8, pady=(0, 8))
+
+        def translate():
+            text = area.get('1.0', 'end-1c')
+            if text.strip() and not self.closed and self.busy.acquire(False):
+                self.events.put(('begin', None, text))
+
+        ttk.Button(buttons, text='日本語に翻訳', command=translate).pack(side='left')
+        ttk.Button(buttons, text='設定・ChatGPTログイン',
+                   command=lambda: self.events.put(('settings',))).pack(side='right')
+        area.focus_set()
+
     def poll(self):
         self.dismiss_outside()
         while not self.events.empty():
@@ -527,7 +580,7 @@ class TranslationApp:
             elif kind == 'begin':
                 self.generation += 1
                 self.result = ''
-                threading.Thread(target=self.worker, args=(self.generation,event[1] if len(event)>1 else None), daemon=True).start()
+                threading.Thread(target=self.worker, args=(self.generation,*event[1:]), daemon=True).start()
             elif len(event) > 1 and event[1] == self.generation:
                 if kind == 'result':
                     self.result = event[2]
@@ -542,12 +595,17 @@ class TranslationApp:
         self.drag_end()
         self.closed = True
         self.clear_copy_feedback(refit=False)
-        self.hotkey.stop()
-        self.icon.stop()
+        if getattr(self, 'resident', True):
+            self.hotkey.stop()
+            self.icon.stop()
         self.root.destroy()
 
     def run(self):
         diagnostics.startup()
+        if not getattr(self, 'resident', True):
+            self.root.after(30, self.poll)
+            self.root.mainloop()
+            return
         try:
             self.hotkey.start()
         except OSError:
@@ -561,6 +619,27 @@ class TranslationApp:
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description='JTranslate')
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument('--resident', dest='resident', action='store_true',
+                       help='Enable the global shortcut and tray/menu bar icon (default)')
+    modes.add_argument('--no-resident', dest='resident', action='store_false',
+                       help='Open a manual translation window, with no global shortcut or tray icon')
+    parser.set_defaults(resident=True)
+    options = parser.parse_args()
+    if IS_MAC:
+        from .config import data_dir
+        import fcntl
+        directory = data_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        with (directory / 'instance.lock').open('a') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return
+            TranslationApp(resident=options.resident).run()
+        return
     kernel = ctypes.WinDLL('kernel32', use_last_error=True)
     kernel.CreateMutexW.restype = ctypes.c_void_p
     mutex = kernel.CreateMutexW(None, False, 'Local\\JTranslate-1f604a38')
@@ -570,6 +649,6 @@ def main():
         return
     try:
         set_app_identity("JTranslate", "JTranslate", ICON_PATH.with_suffix(".png"))
-        TranslationApp().run()
+        TranslationApp(resident=options.resident).run()
     finally:
         kernel.CloseHandle(ctypes.c_void_p(mutex))

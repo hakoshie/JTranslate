@@ -1,0 +1,59 @@
+name: Desktop builds
+on:
+  push:
+    branches: [main, "dot/jtranslate-desktop-builds"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            target: windows-x64
+          - os: macos-15
+            target: macos-arm64
+          - os: macos-15-intel
+            target: macos-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -r requirements-dev.txt "pyinstaller>=6.15,<7"
+      - name: Windows unit tests
+        if: runner.os == 'Windows'
+        run: python -m pytest -q
+      - name: Package Windows executable
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --windowed --name JTranslate --icon assets/jtranslate-d-yaku.ico --add-data "assets:assets" --add-data "jtranslate_app/read-selection.ps1:jtranslate_app" --hidden-import pystray._win32 translate.pyw
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (!(Test-Path dist/JTranslate/_internal/jtranslate_app/read-selection.ps1)) { throw "Missing selection helper" }
+          $process = Start-Process dist/JTranslate/JTranslate.exe -ArgumentList '--help' -PassThru -Wait
+          if ($process.ExitCode -ne 0) { exit $process.ExitCode }
+          Compress-Archive -Path dist/JTranslate -DestinationPath JTranslate-${{ matrix.target }}.zip
+      - name: Package macOS app
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          python -m PyInstaller --noconfirm --windowed --name JTranslate --osx-bundle-identifier jp.hakoshie.jtranslate --icon assets/jtranslate-d-yaku.png --add-data "assets:assets" --hidden-import keyring.backends.macOS translate.pyw
+          plutil -insert LSUIElement -bool YES dist/JTranslate.app/Contents/Info.plist
+          codesign --force --sign - dist/JTranslate.app
+          codesign --verify --strict dist/JTranslate.app
+          dist/JTranslate.app/Contents/MacOS/JTranslate --help
+          ditto -c -k --sequesterRsrc --keepParent dist/JTranslate.app JTranslate-${{ matrix.target }}.zip
+      - name: Upload ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: JTranslate-${{ matrix.target }}
+          path: JTranslate-${{ matrix.target }}.zip
+          if-no-files-found: error
