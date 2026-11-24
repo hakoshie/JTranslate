@@ -137,10 +137,16 @@ $env:PYTHONPATH = (Get-Location).Path
 Windows実動テストは常駐を終了した検証環境で手動実行してください。合成文だけを使い、翻訳応答・認証はテスト用データに置き換えます。
 設定保存テストも一時フォルダーだけを使います。実ユーザーの認証は行いません。
 
-## GitHub Actions版（Windows / macOS）
+## ビルド済み版（Windows / macOS）
+
+[GitHub Releases](https://github.com/hakoshie/JTranslate/releases) から、Windows x64・Mac Apple Silicon・Mac Intel の各ZIPをダウンロードできます。
 
 [Desktop builds](https://github.com/hakoshie/JTranslate/actions/workflows/desktop-builds.yml) の成功した実行にある Artifacts から、Windows x64・macOS Apple Silicon・macOS Intel 用のZIPを選べます。配布用の署名・Appleの公証は行っていません。Windows版は展開したフォルダーごと保持してください。
 
 - 通常起動（または `--resident`）：Windowsは通知領域、macOSはメニューバーの「訳」から設定・一時停止・終了。ログイン時の自動起動は登録しません。
 - `--no-resident`：トレイ／メニューバーとグローバルホットキーを使わず、ウィンドウに貼り付けた文章を翻訳します。Windowsは `JTranslate.exe --no-resident`、Macは通常版を終了してから `open -a /path/to/JTranslate.app --args --no-resident`。
 - Macの常駐版は **Control+M**。macOSの「プライバシーとセキュリティ → アクセシビリティ」でJTranslateを許可し、再起動してください。選択テキストをアクセシビリティAPIで公開しているアプリ・入力欄のみ対応し、コピー操作は自動実行しません。対応しない入力欄では手動モードが使えます。ChatGPTの認証情報はmacOSキーチェーンに、設定は `~/Library/Application Support/JTranslate/settings.json` に保存します。
+
+### リリース手順（開発者向け）
+
+配布するコミットに `vX.Y.Z` のタグを付けて push するか、同じ名前の `release/vX.Y.Z` ブランチを push します。GitHub Actions が全環境でビルド・起動確認を終えてから、3 種類の ZIP を GitHub Release にアップロードします。リリースブランチ方式では、タグがまだなければビルド対象コミットにタグを作ります。通常ブランチ・Pull Request ではビルド結果を Artifacts に置くだけで、Release は作りません。
